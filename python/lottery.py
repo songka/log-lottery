@@ -142,6 +142,10 @@ def remaining_slots(prize: PrizeConfig, state: Dict[str, Any]) -> int:
     return prize.count - len(prize_state["winners"])
 
 
+def available_prizes(prizes: List[PrizeConfig], state: Dict[str, Any]) -> List[PrizeConfig]:
+    return [prize for prize in prizes if remaining_slots(prize, state) > 0]
+
+
 def draw_prize(
     prize: PrizeConfig,
     people: List[Person],
