@@ -1,0 +1,7 @@
+{
+  "participants_file": "data/participants.json",
+  "prizes_file": "data/prizes.json",
+  "output_dir": "output",
+  "results_file": "results.json",
+  "results_csv": "results.csv"
+}
