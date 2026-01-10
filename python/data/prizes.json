@@ -1,0 +1,26 @@
+[
+  {
+    "id": "P001",
+    "name": "三等奖",
+    "count": 2,
+    "exclude_previous_winners": true,
+    "exclude_must_win": true,
+    "must_win_ids": []
+  },
+  {
+    "id": "P002",
+    "name": "二等奖",
+    "count": 1,
+    "exclude_previous_winners": true,
+    "exclude_must_win": true,
+    "must_win_ids": ["U1006"]
+  },
+  {
+    "id": "P003",
+    "name": "一等奖",
+    "count": 1,
+    "exclude_previous_winners": true,
+    "exclude_must_win": false,
+    "must_win_ids": []
+  }
+]
