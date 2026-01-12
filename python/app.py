@@ -33,6 +33,7 @@ class LotteryApp:
         self.config_path = config_path
         self.base_dir = config_path.parent
 
+        self._ensure_default_files()
         self.config = self._load_config()
         self.participants_file = resolve_path(self.base_dir, self.config["participants_file"])
         self.prizes_file = resolve_path(self.base_dir, self.config["prizes_file"])
@@ -60,6 +61,65 @@ class LotteryApp:
             messagebox.showerror("配置错误", f"未找到配置文件: {self.config_path}")
             raise SystemExit(1)
         return read_json(self.config_path)
+
+    def _ensure_default_files(self) -> None:
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        if not self.config_path.exists():
+            default_config = {
+                "participants_file": "data/participants.json",
+                "prizes_file": "data/prizes.json",
+                "output_dir": "output",
+                "results_file": "results.json",
+                "results_csv": "results.csv",
+            }
+            with self.config_path.open("w", encoding="utf-8") as handle:
+                json.dump(default_config, handle, ensure_ascii=False, indent=2)
+
+        data_dir = self.base_dir / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        participants_path = data_dir / "participants.json"
+        if not participants_path.exists():
+            participants = [
+                {"id": "U1001", "name": "张三", "department": "研发"},
+                {"id": "U1002", "name": "李四", "department": "产品"},
+                {"id": "U1003", "name": "王五", "department": "设计"},
+                {"id": "U1004", "name": "赵六", "department": "运营"},
+                {"id": "U1005", "name": "钱七", "department": "市场"},
+                {"id": "U1006", "name": "孙八", "department": "财务"},
+            ]
+            with participants_path.open("w", encoding="utf-8") as handle:
+                json.dump(participants, handle, ensure_ascii=False, indent=2)
+
+        prizes_path = data_dir / "prizes.json"
+        if not prizes_path.exists():
+            prizes = [
+                {
+                    "id": "P001",
+                    "name": "三等奖",
+                    "count": 2,
+                    "exclude_previous_winners": True,
+                    "exclude_must_win": True,
+                    "must_win_ids": [],
+                },
+                {
+                    "id": "P002",
+                    "name": "二等奖",
+                    "count": 1,
+                    "exclude_previous_winners": True,
+                    "exclude_must_win": True,
+                    "must_win_ids": ["U1006"],
+                },
+                {
+                    "id": "P003",
+                    "name": "一等奖",
+                    "count": 1,
+                    "exclude_previous_winners": True,
+                    "exclude_must_win": False,
+                    "must_win_ids": [],
+                },
+            ]
+            with prizes_path.open("w", encoding="utf-8") as handle:
+                json.dump(prizes, handle, ensure_ascii=False, indent=2)
 
     def _build_ui(self) -> None:
         notebook = ttk.Notebook(self.root)
