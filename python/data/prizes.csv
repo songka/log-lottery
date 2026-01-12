@@ -1,0 +1,4 @@
+﻿id,name,count,exclude_previous_winners,exclude_must_win,exclude_excluded_list,must_win_ids
+P001,三等奖,2,True,True,True,
+P002,二等奖,1,True,True,True,U1006
+P003,一等奖,1,True,False,True,

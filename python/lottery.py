@@ -14,6 +14,7 @@ import argparse
 import csv
 import json
 import random
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +49,25 @@ def write_json(path: Path, payload: Any) -> None:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
+def _parse_bool(value: Any, default: bool = True) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    raw = str(value).strip().lower()
+    if raw in {"1", "true", "yes", "y", "是", "对", "t"}:
+        return True
+    if raw in {"0", "false", "no", "n", "否", "错", "f"}:
+        return False
+    raise ValueError(f"无法解析布尔值: {value}")
+
+
+def _split_ids(raw: str) -> List[str]:
+    if not raw:
+        return []
+    return [item for item in re.split(r"[;,，\s]+", raw) if item]
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
@@ -57,6 +77,110 @@ def resolve_path(base_dir: Path, raw_path: str) -> Path:
     if candidate.is_absolute():
         return candidate
     return base_dir / raw_path
+
+
+def _read_people_csv(path: Path) -> List[Dict[str, Any]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        return [
+            {
+                "id": row.get("id", "").strip(),
+                "name": row.get("name", "").strip(),
+                "department": row.get("department", "").strip(),
+            }
+            for row in reader
+            if any(row.values())
+        ]
+
+
+def _read_prizes_csv(path: Path) -> List[Dict[str, Any]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        data: List[Dict[str, Any]] = []
+        for row in reader:
+            if not any(row.values()):
+                continue
+            must_win_ids = _split_ids(str(row.get("must_win_ids", "")).strip())
+            data.append(
+                {
+                    "id": str(row.get("id", "")).strip(),
+                    "name": str(row.get("name", "")).strip(),
+                    "count": int(row.get("count", 0) or 0),
+                    "exclude_previous_winners": _parse_bool(row.get("exclude_previous_winners", True)),
+                    "exclude_must_win": _parse_bool(row.get("exclude_must_win", True)),
+                    "exclude_excluded_list": _parse_bool(row.get("exclude_excluded_list", True)),
+                    "must_win_ids": must_win_ids,
+                }
+            )
+        return data
+
+
+def _write_people_csv(path: Path, payload: Iterable[Dict[str, Any]]) -> None:
+    fieldnames = ["id", "name", "department"]
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in payload:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+
+def _write_prizes_csv(path: Path, payload: Iterable[Dict[str, Any]]) -> None:
+    fieldnames = [
+        "id",
+        "name",
+        "count",
+        "exclude_previous_winners",
+        "exclude_must_win",
+        "exclude_excluded_list",
+        "must_win_ids",
+    ]
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in payload:
+            writer.writerow(
+                {
+                    "id": row.get("id", ""),
+                    "name": row.get("name", ""),
+                    "count": row.get("count", ""),
+                    "exclude_previous_winners": row.get("exclude_previous_winners", True),
+                    "exclude_must_win": row.get("exclude_must_win", True),
+                    "exclude_excluded_list": row.get("exclude_excluded_list", True),
+                    "must_win_ids": ",".join(row.get("must_win_ids", [])),
+                }
+            )
+
+
+def read_people_data(path: Path) -> List[Dict[str, Any]]:
+    if path.suffix.lower() == ".csv":
+        return _read_people_csv(path)
+    return read_json(path)
+
+
+def read_prizes_data(path: Path) -> List[Dict[str, Any]]:
+    if path.suffix.lower() == ".csv":
+        return _read_prizes_csv(path)
+    return read_json(path)
+
+
+def read_excluded_data(path: Path) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    return read_people_data(path)
+
+
+def write_people_data(path: Path, payload: Iterable[Dict[str, Any]]) -> None:
+    if path.suffix.lower() == ".csv":
+        _write_people_csv(path, payload)
+    else:
+        write_json(path, list(payload))
+
+
+def write_prizes_data(path: Path, payload: Iterable[Dict[str, Any]]) -> None:
+    if path.suffix.lower() == ".csv":
+        _write_prizes_csv(path, payload)
+    else:
+        write_json(path, list(payload))
 
 
 def parse_people_entries(raw_people: Iterable[Dict[str, Any]]) -> List[Person]:
@@ -80,7 +204,7 @@ def parse_people_entries(raw_people: Iterable[Dict[str, Any]]) -> List[Person]:
 
 
 def load_people(path: Path) -> List[Person]:
-    raw_people = read_json(path)
+    raw_people = read_people_data(path)
     return parse_people_entries(raw_people)
 
 
@@ -113,14 +237,12 @@ def parse_prize_entries(raw_prizes: Iterable[Dict[str, Any]]) -> List[PrizeConfi
 
 
 def load_prizes(path: Path) -> List[PrizeConfig]:
-    raw_prizes = read_json(path)
+    raw_prizes = read_prizes_data(path)
     return parse_prize_entries(raw_prizes)
 
 
 def load_excluded_people(path: Path) -> List[Person]:
-    if not path.exists():
-        return []
-    raw_people = read_json(path)
+    raw_people = read_excluded_data(path)
     return parse_people_entries(raw_people)
 
 
@@ -154,7 +276,7 @@ def save_csv(csv_path: Path, winners: Iterable[Dict[str, Any]]) -> None:
         "department",
         "source",
     ]
-    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+    with csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for winner in winners:
@@ -294,7 +416,7 @@ def main() -> None:
 
     participants_file = resolve_path(base_dir, config["participants_file"])
     prizes_file = resolve_path(base_dir, config["prizes_file"])
-    excluded_file = resolve_path(base_dir, config.get("excluded_file", "data/excluded.json"))
+    excluded_file = resolve_path(base_dir, config.get("excluded_file", "data/excluded.csv"))
     output_dir = resolve_path(base_dir, config.get("output_dir", "output"))
     results_file = config.get("results_file", "results.json")
     results_csv = config.get("results_csv", "results.csv")
