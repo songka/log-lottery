@@ -58,28 +58,45 @@ def resolve_path(base_dir: Path, raw_path: str) -> Path:
     return base_dir / raw_path
 
 
-def load_people(path: Path) -> List[Person]:
-    raw_people = read_json(path)
+def parse_people_entries(raw_people: Iterable[Dict[str, Any]]) -> List[Person]:
+    if not isinstance(raw_people, list):
+        raise ValueError("Participants data must be a list of objects.")
     people = []
+    seen_ids = set()
     for entry in raw_people:
         person_id = str(entry.get("id", "")).strip()
         name = str(entry.get("name", "")).strip()
         if not person_id or not name:
             raise ValueError(f"Invalid participant entry: {entry}")
-        department = str(entry.get("department", ""))
+        if person_id in seen_ids:
+            raise ValueError(f"Duplicate participant id: {person_id}")
+        seen_ids.add(person_id)
+        department = str(entry.get("department", "")).strip()
+        if not department:
+            raise ValueError(f"Invalid participant entry (missing department): {entry}")
         people.append(Person(person_id=person_id, name=name, department=department))
     return people
 
 
-def load_prizes(path: Path) -> List[PrizeConfig]:
-    raw_prizes = read_json(path)
+def load_people(path: Path) -> List[Person]:
+    raw_people = read_json(path)
+    return parse_people_entries(raw_people)
+
+
+def parse_prize_entries(raw_prizes: Iterable[Dict[str, Any]]) -> List[PrizeConfig]:
+    if not isinstance(raw_prizes, list):
+        raise ValueError("Prizes data must be a list of objects.")
     prizes = []
+    seen_ids = set()
     for entry in raw_prizes:
         prize_id = str(entry.get("id", "")).strip()
         name = str(entry.get("name", "")).strip()
         count = int(entry.get("count", 0))
         if not prize_id or not name or count <= 0:
             raise ValueError(f"Invalid prize entry: {entry}")
+        if prize_id in seen_ids:
+            raise ValueError(f"Duplicate prize id: {prize_id}")
+        seen_ids.add(prize_id)
         prizes.append(
             PrizeConfig(
                 prize_id=prize_id,
@@ -91,6 +108,18 @@ def load_prizes(path: Path) -> List[PrizeConfig]:
             )
         )
     return prizes
+
+
+def load_prizes(path: Path) -> List[PrizeConfig]:
+    raw_prizes = read_json(path)
+    return parse_prize_entries(raw_prizes)
+
+
+def load_excluded_people(path: Path) -> List[Person]:
+    if not path.exists():
+        return []
+    raw_people = read_json(path)
+    return parse_people_entries(raw_people)
 
 
 def load_state(state_path: Path) -> Dict[str, Any]:
@@ -151,10 +180,12 @@ def draw_prize(
     people: List[Person],
     state: Dict[str, Any],
     global_must_win: set[str],
+    excluded_ids: Optional[set[str]] = None,
 ) -> List[Dict[str, Any]]:
     prize_state = state["prizes"].setdefault(prize.prize_id, {"winners": []})
     existing_prize_winners = set(prize_state["winners"])
     existing_global_winners = {winner["person_id"] for winner in state["winners"]}
+    excluded_ids = excluded_ids or set()
 
     remaining = remaining_slots(prize, state)
     if remaining <= 0:
@@ -170,6 +201,7 @@ def draw_prize(
         if person.person_id not in excluded_winners
         and person.person_id not in excluded_must_win
         and person.person_id not in existing_prize_winners
+        and person.person_id not in excluded_ids
     ]
 
     selected: List[Dict[str, Any]] = []
@@ -177,6 +209,8 @@ def draw_prize(
 
     for must_id in prize.must_win_ids:
         if must_id in existing_prize_winners:
+            continue
+        if must_id in excluded_ids:
             continue
         match = next((person for person in people if person.person_id == must_id), None)
         if not match:
@@ -228,6 +262,11 @@ def parse_args() -> argparse.Namespace:
         help="Path to config.json (default: python/config.json)",
     )
     parser.add_argument("--seed", type=int, help="Random seed for reproducible draws")
+    parser.add_argument(
+        "--include-excluded",
+        action="store_true",
+        help="Include the excluded list when drawing winners",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     draw_parser = subparsers.add_parser("draw", help="Draw winners for a single prize")
@@ -251,6 +290,7 @@ def main() -> None:
 
     participants_file = resolve_path(base_dir, config["participants_file"])
     prizes_file = resolve_path(base_dir, config["prizes_file"])
+    excluded_file = resolve_path(base_dir, config.get("excluded_file", "data/excluded.json"))
     output_dir = resolve_path(base_dir, config.get("output_dir", "output"))
     results_file = config.get("results_file", "results.json")
     results_csv = config.get("results_csv", "results.csv")
@@ -269,6 +309,8 @@ def main() -> None:
     prizes = load_prizes(prizes_file)
     state = load_state(state_path)
     global_must_win = build_global_must_win(prizes)
+    excluded_people = load_excluded_people(excluded_file)
+    excluded_ids = {person.person_id for person in excluded_people} if not args.include_excluded else set()
 
     if args.command == "show":
         if not state["winners"]:
@@ -293,10 +335,10 @@ def main() -> None:
                 options = "，".join(f"{item.prize_id}({item.name})" for item in available)
                 raise SystemExit(f"奖项已抽完: {args.prize}。可抽奖项: {options}")
             raise SystemExit("所有奖项已抽完，无可抽奖项。")
-        selected_total.extend(draw_prize(prize, people, state, global_must_win))
+        selected_total.extend(draw_prize(prize, people, state, global_must_win, excluded_ids))
     elif args.command == "draw-all":
         for prize in prizes:
-            selected_total.extend(draw_prize(prize, people, state, global_must_win))
+            selected_total.extend(draw_prize(prize, people, state, global_must_win, excluded_ids))
 
     save_state(state_path, state)
     save_csv(csv_path, state["winners"])
