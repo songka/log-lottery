@@ -176,16 +176,26 @@ class LotteryApp:
         return data
 
     def _build_ui(self) -> None:
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill=tk.BOTH, expand=True)
+        self.main_notebook = ttk.Notebook(self.root)
+        self.main_notebook.pack(fill=tk.BOTH, expand=True)
 
-        self.main_frame = ttk.Frame(notebook)
-        self.config_frame = ttk.Frame(notebook)
-        notebook.add(self.main_frame, text="主界面")
-        notebook.add(self.config_frame, text="配置")
+        self.main_frame = ttk.Frame(self.main_notebook)
+        self.config_tab = ttk.Frame(self.main_notebook)
+        self.participants_tab = ttk.Frame(self.main_notebook)
+        self.prizes_tab = ttk.Frame(self.main_notebook)
+        self.excluded_tab = ttk.Frame(self.main_notebook)
+
+        self.main_notebook.add(self.main_frame, text="主界面")
+        self.main_notebook.add(self.config_tab, text="配置文件")
+        self.main_notebook.add(self.participants_tab, text="人员名单")
+        self.main_notebook.add(self.prizes_tab, text="奖项配置")
+        self.main_notebook.add(self.excluded_tab, text="排查名单")
 
         self._build_main_tab()
-        self._build_config_tab()
+        self._build_config_editor(self.config_tab)
+        self._build_people_editor(self.participants_tab)
+        self._build_prizes_editor(self.prizes_tab)
+        self._build_excluded_editor(self.excluded_tab)
 
     def _build_main_tab(self) -> None:
         top_frame = ttk.Frame(self.main_frame, padding=10)
@@ -215,25 +225,6 @@ class LotteryApp:
         self.output_text = tk.Text(self.main_frame, height=16, wrap=tk.WORD)
         self.output_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-    def _build_config_tab(self) -> None:
-        self.config_notebook = ttk.Notebook(self.config_frame)
-        self.config_notebook.pack(fill=tk.BOTH, expand=True)
-
-        config_tab = ttk.Frame(self.config_notebook)
-        participants_tab = ttk.Frame(self.config_notebook)
-        prizes_tab = ttk.Frame(self.config_notebook)
-        self.excluded_tab = ttk.Frame(self.config_notebook)
-
-        self.config_notebook.add(config_tab, text="配置文件")
-        self.config_notebook.add(participants_tab, text="人员名单")
-        self.config_notebook.add(prizes_tab, text="奖项配置")
-        self.config_notebook.add(self.excluded_tab, text="排查名单")
-
-        self._build_config_editor(config_tab)
-        self._build_people_editor(participants_tab)
-        self._build_prizes_editor(prizes_tab)
-        self._build_excluded_editor(self.excluded_tab)
-
     def _build_config_editor(self, parent: ttk.Frame) -> None:
         info_frame = ttk.Frame(parent, padding=10)
         info_frame.pack(fill=tk.X)
@@ -250,22 +241,21 @@ class LotteryApp:
         self.excluded_title_label.pack(anchor=tk.W)
         self.excluded_path_label.pack(anchor=tk.W)
         ttk.Label(info_frame, text="结果输出:").pack(anchor=tk.W)
-        self.output_dir_label = ttk.Label(info_frame, textvariable=self.output_dir_var)
-        self.output_dir_label.pack(anchor=tk.W)
+        ttk.Label(info_frame, textvariable=self.output_dir_var).pack(anchor=tk.W)
         ttk.Label(info_frame, text="登录状态:").pack(anchor=tk.W, pady=(10, 0))
         ttk.Label(info_frame, textvariable=self.login_status_var).pack(anchor=tk.W)
 
         button_frame = ttk.Frame(parent, padding=10)
         button_frame.pack(fill=tk.X)
         ttk.Button(button_frame, text="选择配置文件", command=self._select_config_file).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="打开配置文件", command=self._open_config_file).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="选择人员名单", command=self._select_participants_file).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="选择奖项配置", command=self._select_prizes_file).pack(side=tk.LEFT, padx=5)
-        self.excluded_select_button = ttk.Button(
-            button_frame, text="选择排查名单", command=self._select_excluded_file
+        ttk.Button(button_frame, text="选择人员名单", command=self._select_participants_file).pack(
+            side=tk.LEFT, padx=5
         )
-        self.excluded_select_button.pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="选择奖项配置", command=self._select_prizes_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="选择输出目录", command=self._select_output_dir).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="选择排查名单", command=self._select_excluded_file).pack(
+            side=tk.LEFT, padx=5
+        )
         ttk.Button(button_frame, text="登录/退出", command=self._toggle_login).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="重新加载配置", command=self._reload_all).pack(side=tk.LEFT, padx=5)
         self._update_config_visibility()
@@ -382,13 +372,13 @@ class LotteryApp:
         self.config_path_var.set(str(self.config_path))
         self._reload_all()
 
-    def _relative_path(self, path: Path) -> str:
+    def _relative_or_absolute(self, path: Path) -> str:
         try:
             return str(path.relative_to(self.base_dir))
         except ValueError:
             return str(path)
 
-    def _save_config_data(self) -> None:
+    def _save_config_file(self) -> None:
         with self.config_path.open("w", encoding="utf-8") as handle:
             json.dump(self.config, handle, ensure_ascii=False, indent=2)
 
@@ -399,9 +389,8 @@ class LotteryApp:
         )
         if not path:
             return
-        chosen = Path(path)
-        self.config["participants_file"] = self._relative_path(chosen)
-        self._save_config_data()
+        self.config["participants_file"] = self._relative_or_absolute(Path(path))
+        self._save_config_file()
         self._reload_all()
 
     def _select_prizes_file(self) -> None:
@@ -411,50 +400,28 @@ class LotteryApp:
         )
         if not path:
             return
-        chosen = Path(path)
-        self.config["prizes_file"] = self._relative_path(chosen)
-        self._save_config_data()
+        self.config["prizes_file"] = self._relative_or_absolute(Path(path))
+        self._save_config_file()
         self._reload_all()
 
     def _select_excluded_file(self) -> None:
-        if not self.is_admin:
-            return
         path = filedialog.askopenfilename(
             title="选择排查名单文件",
             filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
         )
         if not path:
             return
-        chosen = Path(path)
-        self.config["excluded_file"] = self._relative_path(chosen)
-        self._save_config_data()
+        self.config["excluded_file"] = self._relative_or_absolute(Path(path))
+        self._save_config_file()
         self._reload_all()
 
     def _select_output_dir(self) -> None:
         path = filedialog.askdirectory(title="选择输出目录")
         if not path:
             return
-        chosen = Path(path)
-        self.config["output_dir"] = self._relative_path(chosen)
-        self._save_config_data()
+        self.config["output_dir"] = self._relative_or_absolute(Path(path))
+        self._save_config_file()
         self._reload_all()
-
-    def _open_config_file(self) -> None:
-        if not self.config_path.exists():
-            messagebox.showerror("错误", "配置文件不存在。")
-            return
-        self._open_path_in_os(self.config_path)
-
-    def _open_path_in_os(self, path: Path) -> None:
-        try:
-            if sys.platform.startswith("win"):
-                os.startfile(path)  # type: ignore[attr-defined]
-            elif sys.platform == "darwin":
-                subprocess.run(["open", str(path)], check=False)
-            else:
-                subprocess.run(["xdg-open", str(path)], check=False)
-        except OSError as exc:
-            messagebox.showerror("错误", f"无法打开文件: {exc}")
 
     def _toggle_login(self) -> None:
         if self.is_admin:
@@ -478,7 +445,6 @@ class LotteryApp:
         self._update_prize_columns()
         self._refresh_prizes_tree()
         self._update_excluded_visibility()
-        self._update_config_visibility()
 
     def _update_prize_columns(self) -> None:
         if not hasattr(self, "prizes_tree"):
@@ -489,24 +455,12 @@ class LotteryApp:
     def _update_excluded_visibility(self) -> None:
         if not hasattr(self, "excluded_admin_frame"):
             return
-        if hasattr(self, "config_notebook") and hasattr(self, "excluded_tab"):
-            self.config_notebook.tab(self.excluded_tab, state="normal" if self.is_admin else "hidden")
+        if hasattr(self, "main_notebook") and hasattr(self, "excluded_tab"):
+            self.main_notebook.tab(self.excluded_tab, state="normal" if self.is_admin else "hidden")
         if self.is_admin:
             self.excluded_admin_frame.pack(fill=tk.BOTH, expand=True)
         else:
             self.excluded_admin_frame.pack_forget()
-
-    def _update_config_visibility(self) -> None:
-        if not hasattr(self, "excluded_title_label"):
-            return
-        if self.is_admin:
-            self.excluded_title_label.pack(anchor=tk.W)
-            self.excluded_path_label.pack(anchor=tk.W)
-            self.excluded_select_button.pack(side=tk.LEFT, padx=5)
-        else:
-            self.excluded_title_label.pack_forget()
-            self.excluded_path_label.pack_forget()
-            self.excluded_select_button.pack_forget()
 
     def _set_seed(self) -> None:
         seed = self.seed_var.get().strip()
