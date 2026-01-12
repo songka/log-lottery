@@ -198,32 +198,39 @@ class LotteryApp:
         self._build_excluded_editor(self.excluded_tab)
 
     def _build_main_tab(self) -> None:
-        top_frame = ttk.Frame(self.main_frame, padding=10)
-        top_frame.pack(fill=tk.X)
+        header_frame = ttk.Frame(self.main_frame, padding=10)
+        header_frame.pack(fill=tk.X)
+        ttk.Label(header_frame, text="抽奖中心", font=("Helvetica", 16, "bold")).pack(anchor=tk.W)
 
-        ttk.Label(top_frame, text="随机种子 (可选):").grid(row=0, column=0, sticky=tk.W, padx=5)
-        ttk.Entry(top_frame, textvariable=self.seed_var, width=20).grid(row=0, column=1, sticky=tk.W, padx=5)
+        settings_frame = ttk.LabelFrame(self.main_frame, text="抽奖设置", padding=10)
+        settings_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        ttk.Label(top_frame, text="选择奖项:").grid(row=0, column=2, sticky=tk.W, padx=5)
-        self.prize_combo = ttk.Combobox(top_frame, textvariable=self.prize_var, state="readonly", width=24)
-        self.prize_combo.grid(row=0, column=3, sticky=tk.W, padx=5)
+        ttk.Label(settings_frame, text="随机种子 (可选):").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Entry(settings_frame, textvariable=self.seed_var, width=20).grid(
+            row=0, column=1, sticky=tk.W, padx=5, pady=2
+        )
+
+        ttk.Label(settings_frame, text="选择奖项:").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        self.prize_combo = ttk.Combobox(settings_frame, textvariable=self.prize_var, state="readonly", width=24)
+        self.prize_combo.grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
 
         ttk.Checkbutton(
-            top_frame,
+            settings_frame,
             text="不排除排查名单",
             variable=self.include_excluded_var,
-        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(5, 0))
+        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(6, 0))
 
-        button_frame = ttk.Frame(self.main_frame, padding=10)
-        button_frame.pack(fill=tk.X)
+        action_frame = ttk.Frame(self.main_frame, padding=10)
+        action_frame.pack(fill=tk.X)
+        ttk.Button(action_frame, text="抽取当前奖项", command=self._draw_selected).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="抽取全部奖项", command=self._draw_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="刷新名单", command=self._refresh_winners).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="重置结果", command=self._reset_results).pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(button_frame, text="抽取当前奖项", command=self._draw_selected).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="抽取全部奖项", command=self._draw_all).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="刷新名单", command=self._refresh_winners).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="重置结果", command=self._reset_results).pack(side=tk.LEFT, padx=5)
-
-        self.output_text = tk.Text(self.main_frame, height=16, wrap=tk.WORD)
-        self.output_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        output_frame = ttk.LabelFrame(self.main_frame, text="中奖名单", padding=10)
+        output_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        self.output_text = tk.Text(output_frame, height=16, wrap=tk.WORD)
+        self.output_text.pack(fill=tk.BOTH, expand=True)
 
     def _build_config_editor(self, parent: ttk.Frame) -> None:
         info_frame = ttk.Frame(parent, padding=10)
@@ -234,13 +241,13 @@ class LotteryApp:
         self.participants_path_label = ttk.Label(info_frame, textvariable=self.participants_path_var)
         self.participants_path_label.pack(anchor=tk.W)
         ttk.Label(info_frame, text="奖项配置:").pack(anchor=tk.W)
-        self.prizes_path_label = ttk.Label(info_frame, textvariable=self.prizes_path_var)
-        self.prizes_path_label.pack(anchor=tk.W)
-        self.excluded_title_label = ttk.Label(info_frame, text="排查名单:")
+        ttk.Label(info_frame, textvariable=self.prizes_path_var).pack(anchor=tk.W)
+        self.excluded_label = ttk.Label(info_frame, text="排查名单:")
+        self.excluded_label.pack(anchor=tk.W)
         self.excluded_path_label = ttk.Label(info_frame, textvariable=self.excluded_path_var)
-        self.excluded_title_label.pack(anchor=tk.W)
         self.excluded_path_label.pack(anchor=tk.W)
-        ttk.Label(info_frame, text="结果输出:").pack(anchor=tk.W)
+        self.output_label = ttk.Label(info_frame, text="结果输出:")
+        self.output_label.pack(anchor=tk.W)
         ttk.Label(info_frame, textvariable=self.output_dir_var).pack(anchor=tk.W)
         ttk.Label(info_frame, text="登录状态:").pack(anchor=tk.W, pady=(10, 0))
         ttk.Label(info_frame, textvariable=self.login_status_var).pack(anchor=tk.W)
@@ -253,8 +260,8 @@ class LotteryApp:
         )
         ttk.Button(button_frame, text="选择奖项配置", command=self._select_prizes_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="选择输出目录", command=self._select_output_dir).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="选择排查名单", command=self._select_excluded_file).pack(
-            side=tk.LEFT, padx=5
+        self.excluded_select_button = ttk.Button(
+            button_frame, text="选择排查名单", command=self._select_excluded_file
         )
         ttk.Button(button_frame, text="登录/退出", command=self._toggle_login).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="重新加载配置", command=self._reload_all).pack(side=tk.LEFT, padx=5)
@@ -444,6 +451,7 @@ class LotteryApp:
         self.login_status_var.set("已登录" if self.is_admin else "未登录")
         self._update_prize_columns()
         self._refresh_prizes_tree()
+        self._update_config_visibility()
         self._update_excluded_visibility()
 
     def _update_prize_columns(self) -> None:
@@ -461,6 +469,22 @@ class LotteryApp:
             self.excluded_admin_frame.pack(fill=tk.BOTH, expand=True)
         else:
             self.excluded_admin_frame.pack_forget()
+
+    def _update_config_visibility(self) -> None:
+        if not hasattr(self, "excluded_label"):
+            return
+        if self.is_admin:
+            if not self.excluded_label.winfo_ismapped():
+                self.excluded_label.pack(anchor=tk.W, before=self.output_label)
+            if not self.excluded_path_label.winfo_ismapped():
+                self.excluded_path_label.pack(anchor=tk.W, before=self.output_label)
+            if hasattr(self, "excluded_select_button") and not self.excluded_select_button.winfo_ismapped():
+                self.excluded_select_button.pack(side=tk.LEFT, padx=5)
+        else:
+            self.excluded_label.pack_forget()
+            self.excluded_path_label.pack_forget()
+            if hasattr(self, "excluded_select_button"):
+                self.excluded_select_button.pack_forget()
 
     def _set_seed(self) -> None:
         seed = self.seed_var.get().strip()
