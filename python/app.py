@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import os
 import random
+import subprocess
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -236,7 +238,8 @@ class LotteryApp:
         ttk.Label(info_frame, text="配置文件:").pack(anchor=tk.W)
         ttk.Label(info_frame, textvariable=self.config_path_var).pack(anchor=tk.W)
         ttk.Label(info_frame, text="人员名单:").pack(anchor=tk.W)
-        ttk.Label(info_frame, textvariable=self.participants_path_var).pack(anchor=tk.W)
+        self.participants_path_label = ttk.Label(info_frame, textvariable=self.participants_path_var)
+        self.participants_path_label.pack(anchor=tk.W)
         ttk.Label(info_frame, text="奖项配置:").pack(anchor=tk.W)
         ttk.Label(info_frame, textvariable=self.prizes_path_var).pack(anchor=tk.W)
         self.excluded_label = ttk.Label(info_frame, text="排查名单:")
