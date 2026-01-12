@@ -27,6 +27,7 @@ class PrizeConfig:
     count: int
     exclude_previous_winners: bool
     exclude_must_win: bool
+    exclude_excluded_list: bool
     must_win_ids: List[str]
 
 
@@ -104,6 +105,7 @@ def parse_prize_entries(raw_prizes: Iterable[Dict[str, Any]]) -> List[PrizeConfi
                 count=count,
                 exclude_previous_winners=bool(entry.get("exclude_previous_winners", True)),
                 exclude_must_win=bool(entry.get("exclude_must_win", True)),
+                exclude_excluded_list=bool(entry.get("exclude_excluded_list", True)),
                 must_win_ids=[str(item) for item in entry.get("must_win_ids", [])],
             )
         )
@@ -186,6 +188,8 @@ def draw_prize(
     existing_prize_winners = set(prize_state["winners"])
     existing_global_winners = {winner["person_id"] for winner in state["winners"]}
     excluded_ids = excluded_ids or set()
+    if not prize.exclude_excluded_list:
+        excluded_ids = set()
 
     remaining = remaining_slots(prize, state)
     if remaining <= 0:
@@ -310,7 +314,7 @@ def main() -> None:
     state = load_state(state_path)
     global_must_win = build_global_must_win(prizes)
     excluded_people = load_excluded_people(excluded_file)
-    excluded_ids = {person.person_id for person in excluded_people} if not args.include_excluded else set()
+    excluded_ids = {person.person_id for person in excluded_people}
 
     if args.command == "show":
         if not state["winners"]:

@@ -5,6 +5,7 @@
     "count": 2,
     "exclude_previous_winners": true,
     "exclude_must_win": true,
+    "exclude_excluded_list": true,
     "must_win_ids": []
   },
   {
@@ -13,6 +14,7 @@
     "count": 1,
     "exclude_previous_winners": true,
     "exclude_must_win": true,
+    "exclude_excluded_list": true,
     "must_win_ids": ["U1006"]
   },
   {
@@ -21,6 +23,7 @@
     "count": 1,
     "exclude_previous_winners": true,
     "exclude_must_win": false,
+    "exclude_excluded_list": true,
     "must_win_ids": []
   }
 ]
