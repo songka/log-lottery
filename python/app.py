@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+import copy
 import json
-import os
+import math
 import random
 import subprocess
 import sys
@@ -76,6 +77,17 @@ class LotteryApp:
         self.output_dir_var = tk.StringVar(value=str(self.output_dir))
         self.include_excluded_var = tk.BooleanVar(value=False)
         self.login_status_var = tk.StringVar(value="未登录")
+        self.draw_window = None
+        self.draw_canvas = None
+        self.draw_phase = "idle"
+        self.draw_speed = 0.0
+        self.draw_angle = 0.0
+        self.draw_items: list[dict[str, Any]] = []
+        self.draw_after_id = None
+        self.draw_selected_prize_id = None
+        self.pending_state: dict[str, Any] | None = None
+        self.pending_winners: list[dict[str, Any]] = []
+        self.last_space_time = 0.0
 
         self._build_ui()
         self._update_login_state()
@@ -224,6 +236,7 @@ class LotteryApp:
         action_frame.pack(fill=tk.X)
         ttk.Button(action_frame, text="抽取当前奖项", command=self._draw_selected).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="抽取全部奖项", command=self._draw_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="打开抽奖界面", command=self._open_draw_window).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="刷新名单", command=self._refresh_winners).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="重置结果", command=self._reset_results).pack(side=tk.LEFT, padx=5)
 
@@ -485,6 +498,254 @@ class LotteryApp:
             self.excluded_path_label.pack_forget()
             if hasattr(self, "excluded_select_button"):
                 self.excluded_select_button.pack_forget()
+
+    def _open_draw_window(self) -> None:
+        if self.draw_window and self.draw_window.winfo_exists():
+            self.draw_window.lift()
+            return
+        self.draw_window = tk.Toplevel(self.root)
+        self.draw_window.title("抽奖界面")
+        self.draw_window.geometry("1200x700")
+        self.draw_window.protocol("WM_DELETE_WINDOW", self._close_draw_window)
+        self.draw_window.bind("<space>", self._handle_space)
+
+        container = ttk.Frame(self.draw_window)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        left_panel = ttk.Frame(container, width=260)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+
+        ttk.Label(left_panel, text="奖项列表", font=("Helvetica", 12, "bold")).pack(anchor=tk.W, pady=(0, 6))
+        self.draw_prize_list = tk.Listbox(left_panel, height=12)
+        self.draw_prize_list.pack(fill=tk.X)
+        self.draw_prize_list.bind("<<ListboxSelect>>", self._on_draw_prize_select)
+        self._refresh_draw_prize_list()
+
+        self.draw_prize_info = ttk.Label(left_panel, text="请选择奖项")
+        self.draw_prize_info.pack(anchor=tk.W, pady=(6, 0))
+
+        center_panel = ttk.Frame(container)
+        center_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.draw_canvas = tk.Canvas(center_panel, bg="#1f2230", highlightthickness=0)
+        self.draw_canvas.pack(fill=tk.BOTH, expand=True)
+
+        right_panel = ttk.Frame(container, width=260)
+        right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
+
+        ttk.Label(right_panel, text="控制面板", font=("Helvetica", 12, "bold")).pack(anchor=tk.W, pady=(0, 6))
+        ttk.Button(right_panel, text="进入抽奖", command=self._enter_draw).pack(fill=tk.X, pady=4)
+        ttk.Button(right_panel, text="开始", command=self._start_spin).pack(fill=tk.X, pady=4)
+        ttk.Button(right_panel, text="抽取幸运儿", command=self._draw_lucky).pack(fill=tk.X, pady=4)
+        ttk.Button(right_panel, text="转存该次抽奖", command=self._transfer_draw).pack(fill=tk.X, pady=4)
+
+        ttk.Label(
+            right_panel, text="空格可触发动作 (每次间隔>=1秒)", foreground="#888"
+        ).pack(anchor=tk.W, pady=(10, 0))
+
+        self._build_idle_grid()
+
+    def _close_draw_window(self) -> None:
+        if self.draw_after_id and self.draw_canvas:
+            self.draw_canvas.after_cancel(self.draw_after_id)
+            self.draw_after_id = None
+        if self.draw_window and self.draw_window.winfo_exists():
+            self.draw_window.destroy()
+        self.draw_window = None
+        self.draw_canvas = None
+
+    def _handle_space(self, event: tk.Event) -> None:
+        import time
+
+        current = time.monotonic()
+        if current - self.last_space_time < 1.0:
+            return
+        self.last_space_time = current
+        if self.draw_phase == "idle":
+            self._enter_draw()
+        elif self.draw_phase == "entered":
+            self._start_spin()
+        elif self.draw_phase == "spinning":
+            self._draw_lucky()
+        elif self.draw_phase == "drawn":
+            self._transfer_draw()
+
+    def _refresh_draw_prize_list(self) -> None:
+        if not hasattr(self, "draw_prize_list"):
+            return
+        self.draw_prize_list.delete(0, tk.END)
+        for prize in self.prizes:
+            remaining = remaining_slots(prize, self.state)
+            self.draw_prize_list.insert(tk.END, f"{prize.prize_id} {prize.name} ({remaining})")
+
+    def _on_draw_prize_select(self, event: tk.Event) -> None:
+        selection = self.draw_prize_list.curselection()
+        if not selection:
+            return
+        index = selection[0]
+        prize = self.prizes[index]
+        self.draw_selected_prize_id = prize.prize_id
+        remaining = remaining_slots(prize, self.state)
+        self.draw_prize_info.config(text=f"当前奖项: {prize.name} 剩余 {remaining}")
+
+    def _build_idle_grid(self) -> None:
+        if not self.draw_canvas:
+            return
+        self.draw_canvas.delete("all")
+        names = [person.name for person in self.people if person.person_id not in {w['person_id'] for w in self.state["winners"]}]
+        if not names:
+            names = [person.name for person in self.people]
+        if not names:
+            names = ["暂无人员"]
+        width = self.draw_canvas.winfo_width() or 800
+        height = self.draw_canvas.winfo_height() or 500
+        cols = 10
+        rows = 6
+        needed = cols * rows
+        pool = [names[i % len(names)] for i in range(needed)]
+        self.draw_items = []
+        cell_w = width / cols
+        cell_h = height / rows
+        for idx, name in enumerate(pool):
+            col = idx % cols
+            row = idx // cols
+            x = col * cell_w + cell_w / 2
+            y = row * cell_h + cell_h / 2
+            item_id = self.draw_canvas.create_text(x, y, text=name, fill="#f2f2f2", font=("Helvetica", 12, "bold"))
+            self.draw_items.append({"id": item_id, "vx": 1.5, "vy": 1.2})
+        self.draw_phase = "idle"
+        self._animate_idle_grid()
+
+    def _animate_idle_grid(self) -> None:
+        if not self.draw_canvas or self.draw_phase != "idle":
+            return
+        width = self.draw_canvas.winfo_width()
+        height = self.draw_canvas.winfo_height()
+        for item in self.draw_items:
+            self.draw_canvas.move(item["id"], item["vx"], item["vy"])
+            x, y = self.draw_canvas.coords(item["id"])
+            if x < 20 or x > width - 20:
+                item["vx"] *= -1
+            if y < 20 or y > height - 20:
+                item["vy"] *= -1
+        self.draw_after_id = self.draw_canvas.after(50, self._animate_idle_grid)
+
+    def _enter_draw(self) -> None:
+        if not self.draw_canvas:
+            return
+        if not self.draw_selected_prize_id and self.prizes:
+            self.draw_selected_prize_id = self.prizes[0].prize_id
+        self.draw_canvas.delete("all")
+        self.draw_phase = "entered"
+        self.draw_speed = 0.01
+        self.draw_angle = 0.0
+        self._build_ball()
+        self._animate_ball()
+
+    def _build_ball(self) -> None:
+        if not self.draw_canvas:
+            return
+        self.draw_canvas.delete("all")
+        names = [person.name for person in self.people if person.person_id not in {w['person_id'] for w in self.state["winners"]}]
+        if not names:
+            names = [person.name for person in self.people]
+        if not names:
+            names = ["暂无人员"]
+        count = max(40, len(names))
+        pool = [names[i % len(names)] for i in range(count)]
+        width = self.draw_canvas.winfo_width() or 800
+        height = self.draw_canvas.winfo_height() or 500
+        center_x = width / 2
+        center_y = height / 2
+        radius = min(width, height) * 0.35
+        self.draw_items = []
+        for idx, name in enumerate(pool):
+            angle = (2 * 3.1416 / count) * idx
+            x = center_x + radius * math.cos(angle)
+            y = center_y + radius * math.sin(angle)
+            item_id = self.draw_canvas.create_text(x, y, text=name, fill="#ffd1e8", font=("Helvetica", 10, "bold"))
+            self.draw_items.append({"id": item_id, "angle": angle, "radius": radius})
+
+    def _animate_ball(self) -> None:
+        if not self.draw_canvas or self.draw_phase not in {"entered", "spinning"}:
+            return
+        width = self.draw_canvas.winfo_width()
+        height = self.draw_canvas.winfo_height()
+        center_x = width / 2
+        center_y = height / 2
+        self.draw_angle += self.draw_speed
+        for item in self.draw_items:
+            angle = item["angle"] + self.draw_angle
+            x = center_x + item["radius"] * math.cos(angle)
+            y = center_y + item["radius"] * math.sin(angle)
+            self.draw_canvas.coords(item["id"], x, y)
+        self.draw_after_id = self.draw_canvas.after(40, self._animate_ball)
+
+    def _start_spin(self) -> None:
+        if self.draw_phase not in {"entered", "idle"}:
+            return
+        self.draw_phase = "spinning"
+        self.draw_speed = 0.2
+        self._animate_ball()
+
+    def _draw_lucky(self) -> None:
+        if self.draw_phase != "spinning":
+            return
+        self.draw_phase = "drawn"
+        if not self.draw_selected_prize_id:
+            messagebox.showwarning("提示", "请先选择奖项。")
+            return
+        prize = next((item for item in self.prizes if item.prize_id == self.draw_selected_prize_id), None)
+        if not prize:
+            messagebox.showerror("错误", "奖项不存在。")
+            return
+        excluded_ids = self._current_excluded_ids()
+        preview_state = copy.deepcopy(self.state)
+        self.pending_winners = draw_prize(prize, self.people, preview_state, self.global_must_win, excluded_ids)
+        self.pending_state = preview_state
+        if not self.pending_winners:
+            messagebox.showinfo("结果", "本次未抽出新的中奖名单。")
+            return
+        names = "\n".join([f"{w['person_name']} ({w['person_id']})" for w in self.pending_winners])
+        self._show_winner_popup(names)
+
+    def _show_winner_popup(self, names: str) -> None:
+        if not self.draw_canvas:
+            return
+        width = self.draw_canvas.winfo_width()
+        height = self.draw_canvas.winfo_height()
+        self.draw_canvas.delete("winner_popup")
+        self.draw_canvas.create_rectangle(
+            width * 0.3,
+            height * 0.35,
+            width * 0.7,
+            height * 0.65,
+            fill="#f7d6e5",
+            outline="#ffffff",
+            width=2,
+            tags="winner_popup",
+        )
+        self.draw_canvas.create_text(
+            width / 2,
+            height / 2,
+            text=names,
+            fill="#2f1f33",
+            font=("Helvetica", 14, "bold"),
+            tags="winner_popup",
+        )
+
+    def _transfer_draw(self) -> None:
+        if not self.pending_state or not self.pending_winners:
+            messagebox.showinfo("提示", "暂无可转存的抽奖结果。")
+            return
+        self.state = self.pending_state
+        self.pending_state = None
+        self._persist_state()
+        self._refresh_prizes()
+        self._refresh_winners()
+        self._refresh_draw_prize_list()
+        self.pending_winners = []
+        messagebox.showinfo("完成", "本次抽奖已转存。")
 
     def _set_seed(self) -> None:
         seed = self.seed_var.get().strip()
