@@ -1,8 +1,9 @@
 {
-  "participants_file": "data/participants.json",
-  "prizes_file": "data/prizes.json",
-  "excluded_file": "data/excluded.json",
+  "participants_file": "data/participants.csv",
+  "prizes_file": "data/prizes.csv",
+  "excluded_file": "data/excluded.csv",
   "output_dir": "output",
   "results_file": "results.json",
-  "results_csv": "results.csv"
+  "results_csv": "results.csv",
+  "admin_password": "admin"
 }

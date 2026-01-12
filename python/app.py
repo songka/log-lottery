@@ -3,13 +3,15 @@
 
 from __future__ import annotations
 
+import copy
 import json
+import math
 import random
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
-from typing import Any, Callable
+from tkinter import filedialog, messagebox, simpledialog, ttk
+from typing import Any
 
 from lottery import (
     available_prizes,
@@ -21,12 +23,17 @@ from lottery import (
     load_state,
     parse_people_entries,
     parse_prize_entries,
+    read_excluded_data,
+    read_people_data,
+    read_prizes_data,
     read_json,
     remaining_slots,
     resolve_path,
     save_csv,
     save_state,
     utc_now,
+    write_people_data,
+    write_prizes_data,
 )
 
 
@@ -39,9 +46,11 @@ class LotteryApp:
 
         self._ensure_default_files()
         self.config = self._load_config()
+        self.admin_password = str(self.config.get("admin_password", ""))
+        self.is_admin = False
         self.participants_file = resolve_path(self.base_dir, self.config["participants_file"])
         self.prizes_file = resolve_path(self.base_dir, self.config["prizes_file"])
-        self.excluded_file = resolve_path(self.base_dir, self.config.get("excluded_file", "data/excluded.json"))
+        self.excluded_file = resolve_path(self.base_dir, self.config.get("excluded_file", "data/excluded.csv"))
         self.output_dir = resolve_path(self.base_dir, self.config.get("output_dir", "output"))
         self.results_file = self.config.get("results_file", "results.json")
         self.results_csv = self.config.get("results_csv", "results.csv")
@@ -60,12 +69,27 @@ class LotteryApp:
 
         self.seed_var = tk.StringVar()
         self.prize_var = tk.StringVar()
+        self.config_path_var = tk.StringVar(value=str(self.config_path))
         self.participants_path_var = tk.StringVar(value=str(self.participants_file))
         self.prizes_path_var = tk.StringVar(value=str(self.prizes_file))
         self.excluded_path_var = tk.StringVar(value=str(self.excluded_file))
         self.output_dir_var = tk.StringVar(value=str(self.output_dir))
+        self.include_excluded_var = tk.BooleanVar(value=False)
+        self.login_status_var = tk.StringVar(value="未登录")
+        self.draw_window = None
+        self.draw_canvas = None
+        self.draw_phase = "idle"
+        self.draw_speed = 0.0
+        self.draw_angle = 0.0
+        self.draw_items: list[dict[str, Any]] = []
+        self.draw_after_id = None
+        self.draw_selected_prize_id = None
+        self.pending_state: dict[str, Any] | None = None
+        self.pending_winners: list[dict[str, Any]] = []
+        self.last_space_time = 0.0
 
         self._build_ui()
+        self._update_login_state()
         self._refresh_prizes()
         self._refresh_winners()
 
@@ -79,19 +103,20 @@ class LotteryApp:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         if not self.config_path.exists():
             default_config = {
-                "participants_file": "data/participants.json",
-                "prizes_file": "data/prizes.json",
-                "excluded_file": "data/excluded.json",
+                "participants_file": "data/participants.csv",
+                "prizes_file": "data/prizes.csv",
+                "excluded_file": "data/excluded.csv",
                 "output_dir": "output",
                 "results_file": "results.json",
                 "results_csv": "results.csv",
+                "admin_password": "admin",
             }
             with self.config_path.open("w", encoding="utf-8") as handle:
                 json.dump(default_config, handle, ensure_ascii=False, indent=2)
 
         data_dir = self.base_dir / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
-        participants_path = data_dir / "participants.json"
+        participants_path = data_dir / "participants.csv"
         if not participants_path.exists():
             participants = [
                 {"id": "U1001", "name": "张三", "department": "研发"},
@@ -101,15 +126,13 @@ class LotteryApp:
                 {"id": "U1005", "name": "钱七", "department": "市场"},
                 {"id": "U1006", "name": "孙八", "department": "财务"},
             ]
-            with participants_path.open("w", encoding="utf-8") as handle:
-                json.dump(participants, handle, ensure_ascii=False, indent=2)
+            write_people_data(participants_path, participants)
 
-        excluded_path = data_dir / "excluded.json"
+        excluded_path = data_dir / "excluded.csv"
         if not excluded_path.exists():
-            with excluded_path.open("w", encoding="utf-8") as handle:
-                json.dump([], handle, ensure_ascii=False, indent=2)
+            write_people_data(excluded_path, [])
 
-        prizes_path = data_dir / "prizes.json"
+        prizes_path = data_dir / "prizes.csv"
         if not prizes_path.exists():
             prizes = [
                 {
@@ -140,110 +163,120 @@ class LotteryApp:
                     "must_win_ids": [],
                 },
             ]
-            with prizes_path.open("w", encoding="utf-8") as handle:
-                json.dump(prizes, handle, ensure_ascii=False, indent=2)
+            write_prizes_data(prizes_path, prizes)
 
     def _load_people_data(self) -> list[dict[str, Any]]:
         try:
-            data = read_json(self.participants_file)
+            data = read_people_data(self.participants_file)
         except FileNotFoundError:
             return []
         return data
 
     def _load_prizes_data(self) -> list[dict[str, Any]]:
         try:
-            data = read_json(self.prizes_file)
+            data = read_prizes_data(self.prizes_file)
         except FileNotFoundError:
             return []
         return data
 
     def _load_excluded_data(self) -> list[dict[str, Any]]:
         try:
-            data = read_json(self.excluded_file)
+            data = read_excluded_data(self.excluded_file)
         except FileNotFoundError:
             return []
         return data
 
     def _build_ui(self) -> None:
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill=tk.BOTH, expand=True)
+        self.main_notebook = ttk.Notebook(self.root)
+        self.main_notebook.pack(fill=tk.BOTH, expand=True)
 
-        self.main_frame = ttk.Frame(notebook)
-        self.config_frame = ttk.Frame(notebook)
-        notebook.add(self.main_frame, text="主界面")
-        notebook.add(self.config_frame, text="配置")
+        self.main_frame = ttk.Frame(self.main_notebook)
+        self.config_tab = ttk.Frame(self.main_notebook)
+        self.participants_tab = ttk.Frame(self.main_notebook)
+        self.prizes_tab = ttk.Frame(self.main_notebook)
+        self.excluded_tab = ttk.Frame(self.main_notebook)
+
+        self.main_notebook.add(self.main_frame, text="主界面")
+        self.main_notebook.add(self.config_tab, text="配置文件")
+        self.main_notebook.add(self.participants_tab, text="人员名单")
+        self.main_notebook.add(self.prizes_tab, text="奖项配置")
+        self.main_notebook.add(self.excluded_tab, text="排查名单")
 
         self._build_main_tab()
-        self._build_config_tab()
+        self._build_config_editor(self.config_tab)
+        self._build_people_editor(self.participants_tab)
+        self._build_prizes_editor(self.prizes_tab)
+        self._build_excluded_editor(self.excluded_tab)
 
     def _build_main_tab(self) -> None:
-        top_frame = ttk.Frame(self.main_frame, padding=10)
-        top_frame.pack(fill=tk.X)
+        header_frame = ttk.Frame(self.main_frame, padding=10)
+        header_frame.pack(fill=tk.X)
+        ttk.Label(header_frame, text="抽奖中心", font=("Helvetica", 16, "bold")).pack(anchor=tk.W)
 
-        ttk.Label(top_frame, text="随机种子 (可选):").grid(row=0, column=0, sticky=tk.W, padx=5)
-        ttk.Entry(top_frame, textvariable=self.seed_var, width=20).grid(row=0, column=1, sticky=tk.W, padx=5)
+        settings_frame = ttk.LabelFrame(self.main_frame, text="抽奖设置", padding=10)
+        settings_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        ttk.Label(top_frame, text="选择奖项:").grid(row=0, column=2, sticky=tk.W, padx=5)
-        self.prize_combo = ttk.Combobox(top_frame, textvariable=self.prize_var, state="readonly", width=24)
-        self.prize_combo.grid(row=0, column=3, sticky=tk.W, padx=5)
+        ttk.Label(settings_frame, text="随机种子 (可选):").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Entry(settings_frame, textvariable=self.seed_var, width=20).grid(
+            row=0, column=1, sticky=tk.W, padx=5, pady=2
+        )
+
+        ttk.Label(settings_frame, text="选择奖项:").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        self.prize_combo = ttk.Combobox(settings_frame, textvariable=self.prize_var, state="readonly", width=24)
+        self.prize_combo.grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
 
         ttk.Checkbutton(
-            top_frame,
+            settings_frame,
             text="不排除排查名单",
             variable=self.include_excluded_var,
-        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(5, 0))
+        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(6, 0))
 
-        button_frame = ttk.Frame(self.main_frame, padding=10)
-        button_frame.pack(fill=tk.X)
+        action_frame = ttk.Frame(self.main_frame, padding=10)
+        action_frame.pack(fill=tk.X)
+        ttk.Button(action_frame, text="抽取当前奖项", command=self._draw_selected).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="抽取全部奖项", command=self._draw_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="打开抽奖界面", command=self._open_draw_window).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="刷新名单", command=self._refresh_winners).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="重置结果", command=self._reset_results).pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(button_frame, text="抽取当前奖项", command=self._draw_selected).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="抽取全部奖项", command=self._draw_all).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="刷新名单", command=self._refresh_winners).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="重置结果", command=self._reset_results).pack(side=tk.LEFT, padx=5)
-
-        self.output_text = tk.Text(self.main_frame, height=16, wrap=tk.WORD)
-        self.output_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-    def _build_config_tab(self) -> None:
-        notebook = ttk.Notebook(self.config_frame)
-        notebook.pack(fill=tk.BOTH, expand=True)
-
-        config_tab = ttk.Frame(notebook)
-        participants_tab = ttk.Frame(notebook)
-        prizes_tab = ttk.Frame(notebook)
-        excluded_tab = ttk.Frame(notebook)
-
-        notebook.add(config_tab, text="配置文件")
-        notebook.add(participants_tab, text="人员名单")
-        notebook.add(prizes_tab, text="奖项配置")
-        notebook.add(excluded_tab, text="排查名单")
-
-        self._build_config_editor(config_tab)
-        self._build_people_editor(participants_tab)
-        self._build_prizes_editor(prizes_tab)
-        self._build_excluded_editor(excluded_tab)
+        output_frame = ttk.LabelFrame(self.main_frame, text="中奖名单", padding=10)
+        output_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        self.output_text = tk.Text(output_frame, height=16, wrap=tk.WORD)
+        self.output_text.pack(fill=tk.BOTH, expand=True)
 
     def _build_config_editor(self, parent: ttk.Frame) -> None:
         info_frame = ttk.Frame(parent, padding=10)
         info_frame.pack(fill=tk.X)
-        ttk.Label(info_frame, text=f"配置文件: {self.config_path}").pack(anchor=tk.W)
+        ttk.Label(info_frame, text="配置文件:").pack(anchor=tk.W)
+        ttk.Label(info_frame, textvariable=self.config_path_var).pack(anchor=tk.W)
         ttk.Label(info_frame, text="人员名单:").pack(anchor=tk.W)
         ttk.Label(info_frame, textvariable=self.participants_path_var).pack(anchor=tk.W)
         ttk.Label(info_frame, text="奖项配置:").pack(anchor=tk.W)
         ttk.Label(info_frame, textvariable=self.prizes_path_var).pack(anchor=tk.W)
-        ttk.Label(info_frame, text="排查名单:").pack(anchor=tk.W)
-        ttk.Label(info_frame, textvariable=self.excluded_path_var).pack(anchor=tk.W)
-        ttk.Label(info_frame, text="结果输出:").pack(anchor=tk.W)
+        self.excluded_label = ttk.Label(info_frame, text="排查名单:")
+        self.excluded_label.pack(anchor=tk.W)
+        self.excluded_path_label = ttk.Label(info_frame, textvariable=self.excluded_path_var)
+        self.excluded_path_label.pack(anchor=tk.W)
+        self.output_label = ttk.Label(info_frame, text="结果输出:")
+        self.output_label.pack(anchor=tk.W)
         ttk.Label(info_frame, textvariable=self.output_dir_var).pack(anchor=tk.W)
-
-        self.config_text = tk.Text(parent, height=18, wrap=tk.NONE)
-        self.config_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        self._load_config_editor()
+        ttk.Label(info_frame, text="登录状态:").pack(anchor=tk.W, pady=(10, 0))
+        ttk.Label(info_frame, textvariable=self.login_status_var).pack(anchor=tk.W)
 
         button_frame = ttk.Frame(parent, padding=10)
         button_frame.pack(fill=tk.X)
-        ttk.Button(button_frame, text="保存配置", command=self._save_config).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="选择配置文件", command=self._select_config_file).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="选择人员名单", command=self._select_participants_file).pack(
+            side=tk.LEFT, padx=5
+        )
+        ttk.Button(button_frame, text="选择奖项配置", command=self._select_prizes_file).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="选择输出目录", command=self._select_output_dir).pack(side=tk.LEFT, padx=5)
+        self.excluded_select_button = ttk.Button(
+            button_frame, text="选择排查名单", command=self._select_excluded_file
+        )
+        ttk.Button(button_frame, text="登录/退出", command=self._toggle_login).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="重新加载配置", command=self._reload_all).pack(side=tk.LEFT, padx=5)
+        self._update_config_visibility()
 
     def _build_people_editor(self, parent: ttk.Frame) -> None:
         self.people_tree = ttk.Treeview(parent, columns=("id", "name", "department"), show="headings", height=12)
@@ -269,6 +302,16 @@ class LotteryApp:
         ttk.Button(button_frame, text="保存", command=self._save_people).pack(side=tk.LEFT, padx=5)
 
     def _build_prizes_editor(self, parent: ttk.Frame) -> None:
+        self.prize_columns_basic = ("id", "name", "count", "exclude_previous_winners")
+        self.prize_columns_admin = (
+            "id",
+            "name",
+            "count",
+            "exclude_previous_winners",
+            "exclude_must_win",
+            "exclude_excluded_list",
+            "must_win_ids",
+        )
         self.prizes_tree = ttk.Treeview(
             parent,
             columns=(
@@ -296,6 +339,7 @@ class LotteryApp:
             self.prizes_tree.heading(col, text=label)
             self.prizes_tree.column(col, width=width, anchor=tk.W)
         self.prizes_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self._update_prize_columns()
         self._refresh_prizes_tree()
 
         button_frame = ttk.Frame(parent, padding=10)
@@ -310,7 +354,11 @@ class LotteryApp:
         ttk.Button(button_frame, text="保存", command=self._save_prizes).pack(side=tk.LEFT, padx=5)
 
     def _build_excluded_editor(self, parent: ttk.Frame) -> None:
-        self.excluded_tree = ttk.Treeview(parent, columns=("id", "name", "department"), show="headings", height=12)
+        self.excluded_admin_frame = ttk.Frame(parent)
+
+        self.excluded_tree = ttk.Treeview(
+            self.excluded_admin_frame, columns=("id", "name", "department"), show="headings", height=12
+        )
         for col, label, width in (
             ("id", "工号", 120),
             ("name", "姓名", 120),
@@ -321,7 +369,7 @@ class LotteryApp:
         self.excluded_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         self._refresh_excluded_tree()
 
-        button_frame = ttk.Frame(parent, padding=10)
+        button_frame = ttk.Frame(self.excluded_admin_frame, padding=10)
         button_frame.pack(fill=tk.X)
         ttk.Button(button_frame, text="新增", command=self._add_excluded).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="修改", command=self._edit_excluded).pack(side=tk.LEFT, padx=5)
@@ -331,21 +379,371 @@ class LotteryApp:
         ttk.Button(button_frame, text="导入", command=self._import_excluded).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="导出", command=self._export_excluded).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="保存", command=self._save_excluded).pack(side=tk.LEFT, padx=5)
+        self._update_excluded_visibility()
 
-    def _load_config_editor(self) -> None:
-        self.config_text.delete("1.0", tk.END)
-        self.config_text.insert(tk.END, json.dumps(self.config, ensure_ascii=False, indent=2))
-
-    def _save_config(self) -> None:
-        raw = self.config_text.get("1.0", tk.END).strip()
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            messagebox.showerror("配置错误", f"配置 JSON 无效: {exc}")
+    def _select_config_file(self) -> None:
+        path = filedialog.askopenfilename(title="选择配置文件", filetypes=[("JSON files", "*.json")])
+        if not path:
             return
+        self.config_path = Path(path)
+        self.base_dir = self.config_path.parent
+        self.config_path_var.set(str(self.config_path))
+        self._reload_all()
+
+    def _relative_or_absolute(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.base_dir))
+        except ValueError:
+            return str(path)
+
+    def _save_config_file(self) -> None:
         with self.config_path.open("w", encoding="utf-8") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
-        messagebox.showinfo("成功", "配置已保存，请点击重新加载配置生效。")
+            json.dump(self.config, handle, ensure_ascii=False, indent=2)
+
+    def _select_participants_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="选择人员名单文件",
+            filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
+        )
+        if not path:
+            return
+        self.config["participants_file"] = self._relative_or_absolute(Path(path))
+        self._save_config_file()
+        self._reload_all()
+
+    def _select_prizes_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="选择奖项配置文件",
+            filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
+        )
+        if not path:
+            return
+        self.config["prizes_file"] = self._relative_or_absolute(Path(path))
+        self._save_config_file()
+        self._reload_all()
+
+    def _select_excluded_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="选择排查名单文件",
+            filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
+        )
+        if not path:
+            return
+        self.config["excluded_file"] = self._relative_or_absolute(Path(path))
+        self._save_config_file()
+        self._reload_all()
+
+    def _select_output_dir(self) -> None:
+        path = filedialog.askdirectory(title="选择输出目录")
+        if not path:
+            return
+        self.config["output_dir"] = self._relative_or_absolute(Path(path))
+        self._save_config_file()
+        self._reload_all()
+
+    def _toggle_login(self) -> None:
+        if self.is_admin:
+            self.is_admin = False
+            self._update_login_state()
+            return
+        if not self.admin_password:
+            messagebox.showerror("提示", "请先在配置文件中设置 admin_password。")
+            return
+        password = simpledialog.askstring("登录", "请输入管理员密码：", show="*")
+        if password is None:
+            return
+        if password != self.admin_password:
+            messagebox.showerror("错误", "密码错误。")
+            return
+        self.is_admin = True
+        self._update_login_state()
+
+    def _update_login_state(self) -> None:
+        self.login_status_var.set("已登录" if self.is_admin else "未登录")
+        self._update_prize_columns()
+        self._refresh_prizes_tree()
+        self._update_config_visibility()
+        self._update_excluded_visibility()
+
+    def _update_prize_columns(self) -> None:
+        if not hasattr(self, "prizes_tree"):
+            return
+        display = self.prize_columns_admin if self.is_admin else self.prize_columns_basic
+        self.prizes_tree["displaycolumns"] = display
+
+    def _update_excluded_visibility(self) -> None:
+        if not hasattr(self, "excluded_admin_frame"):
+            return
+        if hasattr(self, "main_notebook") and hasattr(self, "excluded_tab"):
+            self.main_notebook.tab(self.excluded_tab, state="normal" if self.is_admin else "hidden")
+        if self.is_admin:
+            self.excluded_admin_frame.pack(fill=tk.BOTH, expand=True)
+        else:
+            self.excluded_admin_frame.pack_forget()
+
+    def _update_config_visibility(self) -> None:
+        if not hasattr(self, "excluded_label"):
+            return
+        if self.is_admin:
+            if not self.excluded_label.winfo_ismapped():
+                self.excluded_label.pack(anchor=tk.W, before=self.output_label)
+            if not self.excluded_path_label.winfo_ismapped():
+                self.excluded_path_label.pack(anchor=tk.W, before=self.output_label)
+            if hasattr(self, "excluded_select_button") and not self.excluded_select_button.winfo_ismapped():
+                self.excluded_select_button.pack(side=tk.LEFT, padx=5)
+        else:
+            self.excluded_label.pack_forget()
+            self.excluded_path_label.pack_forget()
+            if hasattr(self, "excluded_select_button"):
+                self.excluded_select_button.pack_forget()
+
+    def _open_draw_window(self) -> None:
+        if self.draw_window and self.draw_window.winfo_exists():
+            self.draw_window.lift()
+            return
+        self.draw_window = tk.Toplevel(self.root)
+        self.draw_window.title("抽奖界面")
+        self.draw_window.geometry("1200x700")
+        self.draw_window.protocol("WM_DELETE_WINDOW", self._close_draw_window)
+        self.draw_window.bind("<space>", self._handle_space)
+
+        container = ttk.Frame(self.draw_window)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        left_panel = ttk.Frame(container, width=260)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+
+        ttk.Label(left_panel, text="奖项列表", font=("Helvetica", 12, "bold")).pack(anchor=tk.W, pady=(0, 6))
+        self.draw_prize_list = tk.Listbox(left_panel, height=12)
+        self.draw_prize_list.pack(fill=tk.X)
+        self.draw_prize_list.bind("<<ListboxSelect>>", self._on_draw_prize_select)
+        self._refresh_draw_prize_list()
+
+        self.draw_prize_info = ttk.Label(left_panel, text="请选择奖项")
+        self.draw_prize_info.pack(anchor=tk.W, pady=(6, 0))
+
+        center_panel = ttk.Frame(container)
+        center_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.draw_canvas = tk.Canvas(center_panel, bg="#1f2230", highlightthickness=0)
+        self.draw_canvas.pack(fill=tk.BOTH, expand=True)
+
+        right_panel = ttk.Frame(container, width=260)
+        right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
+
+        ttk.Label(right_panel, text="控制面板", font=("Helvetica", 12, "bold")).pack(anchor=tk.W, pady=(0, 6))
+        ttk.Button(right_panel, text="进入抽奖", command=self._enter_draw).pack(fill=tk.X, pady=4)
+        ttk.Button(right_panel, text="开始", command=self._start_spin).pack(fill=tk.X, pady=4)
+        ttk.Button(right_panel, text="抽取幸运儿", command=self._draw_lucky).pack(fill=tk.X, pady=4)
+        ttk.Button(right_panel, text="转存该次抽奖", command=self._transfer_draw).pack(fill=tk.X, pady=4)
+
+        ttk.Label(
+            right_panel, text="空格可触发动作 (每次间隔>=1秒)", foreground="#888"
+        ).pack(anchor=tk.W, pady=(10, 0))
+
+        self._build_idle_grid()
+
+    def _close_draw_window(self) -> None:
+        if self.draw_after_id and self.draw_canvas:
+            self.draw_canvas.after_cancel(self.draw_after_id)
+            self.draw_after_id = None
+        if self.draw_window and self.draw_window.winfo_exists():
+            self.draw_window.destroy()
+        self.draw_window = None
+        self.draw_canvas = None
+
+    def _handle_space(self, event: tk.Event) -> None:
+        import time
+
+        current = time.monotonic()
+        if current - self.last_space_time < 1.0:
+            return
+        self.last_space_time = current
+        if self.draw_phase == "idle":
+            self._enter_draw()
+        elif self.draw_phase == "entered":
+            self._start_spin()
+        elif self.draw_phase == "spinning":
+            self._draw_lucky()
+        elif self.draw_phase == "drawn":
+            self._transfer_draw()
+
+    def _refresh_draw_prize_list(self) -> None:
+        if not hasattr(self, "draw_prize_list"):
+            return
+        self.draw_prize_list.delete(0, tk.END)
+        for prize in self.prizes:
+            remaining = remaining_slots(prize, self.state)
+            self.draw_prize_list.insert(tk.END, f"{prize.prize_id} {prize.name} ({remaining})")
+
+    def _on_draw_prize_select(self, event: tk.Event) -> None:
+        selection = self.draw_prize_list.curselection()
+        if not selection:
+            return
+        index = selection[0]
+        prize = self.prizes[index]
+        self.draw_selected_prize_id = prize.prize_id
+        remaining = remaining_slots(prize, self.state)
+        self.draw_prize_info.config(text=f"当前奖项: {prize.name} 剩余 {remaining}")
+
+    def _build_idle_grid(self) -> None:
+        if not self.draw_canvas:
+            return
+        self.draw_canvas.delete("all")
+        names = [person.name for person in self.people if person.person_id not in {w['person_id'] for w in self.state["winners"]}]
+        if not names:
+            names = [person.name for person in self.people]
+        if not names:
+            names = ["暂无人员"]
+        width = self.draw_canvas.winfo_width() or 800
+        height = self.draw_canvas.winfo_height() or 500
+        cols = 10
+        rows = 6
+        needed = cols * rows
+        pool = [names[i % len(names)] for i in range(needed)]
+        self.draw_items = []
+        cell_w = width / cols
+        cell_h = height / rows
+        for idx, name in enumerate(pool):
+            col = idx % cols
+            row = idx // cols
+            x = col * cell_w + cell_w / 2
+            y = row * cell_h + cell_h / 2
+            item_id = self.draw_canvas.create_text(x, y, text=name, fill="#f2f2f2", font=("Helvetica", 12, "bold"))
+            self.draw_items.append({"id": item_id, "vx": 1.5, "vy": 1.2})
+        self.draw_phase = "idle"
+        self._animate_idle_grid()
+
+    def _animate_idle_grid(self) -> None:
+        if not self.draw_canvas or self.draw_phase != "idle":
+            return
+        width = self.draw_canvas.winfo_width()
+        height = self.draw_canvas.winfo_height()
+        for item in self.draw_items:
+            self.draw_canvas.move(item["id"], item["vx"], item["vy"])
+            x, y = self.draw_canvas.coords(item["id"])
+            if x < 20 or x > width - 20:
+                item["vx"] *= -1
+            if y < 20 or y > height - 20:
+                item["vy"] *= -1
+        self.draw_after_id = self.draw_canvas.after(50, self._animate_idle_grid)
+
+    def _enter_draw(self) -> None:
+        if not self.draw_canvas:
+            return
+        if not self.draw_selected_prize_id and self.prizes:
+            self.draw_selected_prize_id = self.prizes[0].prize_id
+        self.draw_canvas.delete("all")
+        self.draw_phase = "entered"
+        self.draw_speed = 0.01
+        self.draw_angle = 0.0
+        self._build_ball()
+        self._animate_ball()
+
+    def _build_ball(self) -> None:
+        if not self.draw_canvas:
+            return
+        self.draw_canvas.delete("all")
+        names = [person.name for person in self.people if person.person_id not in {w['person_id'] for w in self.state["winners"]}]
+        if not names:
+            names = [person.name for person in self.people]
+        if not names:
+            names = ["暂无人员"]
+        count = max(40, len(names))
+        pool = [names[i % len(names)] for i in range(count)]
+        width = self.draw_canvas.winfo_width() or 800
+        height = self.draw_canvas.winfo_height() or 500
+        center_x = width / 2
+        center_y = height / 2
+        radius = min(width, height) * 0.35
+        self.draw_items = []
+        for idx, name in enumerate(pool):
+            angle = (2 * 3.1416 / count) * idx
+            x = center_x + radius * math.cos(angle)
+            y = center_y + radius * math.sin(angle)
+            item_id = self.draw_canvas.create_text(x, y, text=name, fill="#ffd1e8", font=("Helvetica", 10, "bold"))
+            self.draw_items.append({"id": item_id, "angle": angle, "radius": radius})
+
+    def _animate_ball(self) -> None:
+        if not self.draw_canvas or self.draw_phase not in {"entered", "spinning"}:
+            return
+        width = self.draw_canvas.winfo_width()
+        height = self.draw_canvas.winfo_height()
+        center_x = width / 2
+        center_y = height / 2
+        self.draw_angle += self.draw_speed
+        for item in self.draw_items:
+            angle = item["angle"] + self.draw_angle
+            x = center_x + item["radius"] * math.cos(angle)
+            y = center_y + item["radius"] * math.sin(angle)
+            self.draw_canvas.coords(item["id"], x, y)
+        self.draw_after_id = self.draw_canvas.after(40, self._animate_ball)
+
+    def _start_spin(self) -> None:
+        if self.draw_phase not in {"entered", "idle"}:
+            return
+        self.draw_phase = "spinning"
+        self.draw_speed = 0.2
+        self._animate_ball()
+
+    def _draw_lucky(self) -> None:
+        if self.draw_phase != "spinning":
+            return
+        self.draw_phase = "drawn"
+        if not self.draw_selected_prize_id:
+            messagebox.showwarning("提示", "请先选择奖项。")
+            return
+        prize = next((item for item in self.prizes if item.prize_id == self.draw_selected_prize_id), None)
+        if not prize:
+            messagebox.showerror("错误", "奖项不存在。")
+            return
+        excluded_ids = self._current_excluded_ids()
+        preview_state = copy.deepcopy(self.state)
+        self.pending_winners = draw_prize(prize, self.people, preview_state, self.global_must_win, excluded_ids)
+        self.pending_state = preview_state
+        if not self.pending_winners:
+            messagebox.showinfo("结果", "本次未抽出新的中奖名单。")
+            return
+        names = "\n".join([f"{w['person_name']} ({w['person_id']})" for w in self.pending_winners])
+        self._show_winner_popup(names)
+
+    def _show_winner_popup(self, names: str) -> None:
+        if not self.draw_canvas:
+            return
+        width = self.draw_canvas.winfo_width()
+        height = self.draw_canvas.winfo_height()
+        self.draw_canvas.delete("winner_popup")
+        self.draw_canvas.create_rectangle(
+            width * 0.3,
+            height * 0.35,
+            width * 0.7,
+            height * 0.65,
+            fill="#f7d6e5",
+            outline="#ffffff",
+            width=2,
+            tags="winner_popup",
+        )
+        self.draw_canvas.create_text(
+            width / 2,
+            height / 2,
+            text=names,
+            fill="#2f1f33",
+            font=("Helvetica", 14, "bold"),
+            tags="winner_popup",
+        )
+
+    def _transfer_draw(self) -> None:
+        if not self.pending_state or not self.pending_winners:
+            messagebox.showinfo("提示", "暂无可转存的抽奖结果。")
+            return
+        self.state = self.pending_state
+        self.pending_state = None
+        self._persist_state()
+        self._refresh_prizes()
+        self._refresh_winners()
+        self._refresh_draw_prize_list()
+        self.pending_winners = []
+        messagebox.showinfo("完成", "本次抽奖已转存。")
 
     def _set_seed(self) -> None:
         seed = self.seed_var.get().strip()
@@ -410,7 +808,7 @@ class LotteryApp:
             self._refresh_prizes()
             return
 
-        excluded_ids = {person.person_id for person in self.excluded_people}
+        excluded_ids = self._current_excluded_ids()
         selected = draw_prize(prize, self.people, self.state, self.global_must_win, excluded_ids)
         self._persist_state()
         self._refresh_prizes()
@@ -430,7 +828,7 @@ class LotteryApp:
         except ValueError:
             return
         selected_total = []
-        excluded_ids = {person.person_id for person in self.excluded_people}
+        excluded_ids = self._current_excluded_ids()
         for prize in self.prizes:
             selected_total.extend(draw_prize(prize, self.people, self.state, self.global_must_win, excluded_ids))
         self._persist_state()
@@ -454,9 +852,11 @@ class LotteryApp:
 
     def _reload_all(self) -> None:
         self.config = self._load_config()
+        self.admin_password = str(self.config.get("admin_password", ""))
+        self.is_admin = False
         self.participants_file = resolve_path(self.base_dir, self.config["participants_file"])
         self.prizes_file = resolve_path(self.base_dir, self.config["prizes_file"])
-        self.excluded_file = resolve_path(self.base_dir, self.config.get("excluded_file", "data/excluded.json"))
+        self.excluded_file = resolve_path(self.base_dir, self.config.get("excluded_file", "data/excluded.csv"))
         self.output_dir = resolve_path(self.base_dir, self.config.get("output_dir", "output"))
         self.results_file = self.config.get("results_file", "results.json")
         self.results_csv = self.config.get("results_csv", "results.csv")
@@ -477,7 +877,8 @@ class LotteryApp:
         self.prizes_path_var.set(str(self.prizes_file))
         self.excluded_path_var.set(str(self.excluded_file))
         self.output_dir_var.set(str(self.output_dir))
-        self._load_config_editor()
+        self.config_path_var.set(str(self.config_path))
+        self._update_login_state()
         self._refresh_people_tree()
         self._refresh_prizes_tree()
         self._refresh_excluded_tree()
@@ -576,6 +977,7 @@ class LotteryApp:
         dialog.transient(self.root)
         dialog.grab_set()
 
+        is_admin = self.is_admin
         prize_id_var = tk.StringVar(value="" if initial is None else str(initial.get("id", "")))
         name_var = tk.StringVar(value="" if initial is None else str(initial.get("name", "")))
         count_var = tk.StringVar(value="" if initial is None else str(initial.get("count", "")))
@@ -598,17 +1000,18 @@ class LotteryApp:
         ttk.Entry(dialog, textvariable=name_var).grid(row=1, column=1, padx=10, pady=5)
         ttk.Label(dialog, text="数量:").grid(row=2, column=0, padx=10, pady=5, sticky=tk.W)
         ttk.Entry(dialog, textvariable=count_var).grid(row=2, column=1, padx=10, pady=5)
-        ttk.Label(dialog, text="保底工号(逗号分隔):").grid(row=3, column=0, padx=10, pady=5, sticky=tk.W)
-        ttk.Entry(dialog, textvariable=must_win_var).grid(row=3, column=1, padx=10, pady=5)
         ttk.Checkbutton(dialog, text="排除已中奖", variable=exclude_previous_var).grid(
-            row=4, column=0, columnspan=2, sticky=tk.W, padx=10
+            row=3, column=0, columnspan=2, sticky=tk.W, padx=10
         )
-        ttk.Checkbutton(dialog, text="排除保底名单", variable=exclude_must_win_var).grid(
-            row=5, column=0, columnspan=2, sticky=tk.W, padx=10
-        )
-        ttk.Checkbutton(dialog, text="排除排查名单", variable=exclude_excluded_var).grid(
-            row=6, column=0, columnspan=2, sticky=tk.W, padx=10
-        )
+        if is_admin:
+            ttk.Label(dialog, text="保底工号(逗号分隔):").grid(row=4, column=0, padx=10, pady=5, sticky=tk.W)
+            ttk.Entry(dialog, textvariable=must_win_var).grid(row=4, column=1, padx=10, pady=5)
+            ttk.Checkbutton(dialog, text="排除保底名单", variable=exclude_must_win_var).grid(
+                row=5, column=0, columnspan=2, sticky=tk.W, padx=10
+            )
+            ttk.Checkbutton(dialog, text="排除排查名单", variable=exclude_excluded_var).grid(
+                row=6, column=0, columnspan=2, sticky=tk.W, padx=10
+            )
 
         result: dict[str, Any] | None = None
 
@@ -624,15 +1027,22 @@ class LotteryApp:
             except ValueError:
                 messagebox.showerror("错误", "数量必须是整数。", parent=dialog)
                 return
-            must_win_ids = [item.strip() for item in must_win_var.get().split(",") if item.strip()]
+            if is_admin:
+                must_win_ids = [item.strip() for item in must_win_var.get().split(",") if item.strip()]
+                exclude_must_win = exclude_must_win_var.get()
+                exclude_excluded = exclude_excluded_var.get()
+            else:
+                must_win_ids = [] if initial is None else list(initial.get("must_win_ids", []))
+                exclude_must_win = True if initial is None else bool(initial.get("exclude_must_win", True))
+                exclude_excluded = True if initial is None else bool(initial.get("exclude_excluded_list", True))
             nonlocal result
             result = {
                 "id": prize_id,
                 "name": name,
                 "count": count,
                 "exclude_previous_winners": exclude_previous_var.get(),
-                "exclude_must_win": exclude_must_win_var.get(),
-                "exclude_excluded_list": exclude_excluded_var.get(),
+                "exclude_must_win": exclude_must_win,
+                "exclude_excluded_list": exclude_excluded,
                 "must_win_ids": must_win_ids,
             }
             dialog.destroy()
@@ -641,7 +1051,7 @@ class LotteryApp:
             dialog.destroy()
 
         button_frame = ttk.Frame(dialog, padding=10)
-        button_frame.grid(row=7, column=0, columnspan=2)
+        button_frame.grid(row=7 if is_admin else 5, column=0, columnspan=2)
         ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=5)
 
@@ -819,16 +1229,14 @@ class LotteryApp:
     def _save_people(self) -> None:
         if not self._apply_people_change(self.people_data):
             return
-        with self.participants_file.open("w", encoding="utf-8") as handle:
-            json.dump(self.people_data, handle, ensure_ascii=False, indent=2)
+        write_people_data(self.participants_file, self.people_data)
         self.people = parse_people_entries(self.people_data)
         messagebox.showinfo("成功", "人员名单已保存。")
 
     def _save_prizes(self) -> None:
         if not self._apply_prizes_change(self.prizes_data):
             return
-        with self.prizes_file.open("w", encoding="utf-8") as handle:
-            json.dump(self.prizes_data, handle, ensure_ascii=False, indent=2)
+        write_prizes_data(self.prizes_file, self.prizes_data)
         self.prizes = parse_prize_entries(self.prizes_data)
         self.global_must_win = build_global_must_win(self.prizes)
         self._refresh_prizes()
@@ -837,69 +1245,102 @@ class LotteryApp:
     def _save_excluded(self) -> None:
         if not self._apply_excluded_change(self.excluded_data):
             return
-        with self.excluded_file.open("w", encoding="utf-8") as handle:
-            json.dump(self.excluded_data, handle, ensure_ascii=False, indent=2)
+        write_people_data(self.excluded_file, self.excluded_data)
         self.excluded_people = parse_people_entries(self.excluded_data)
         messagebox.showinfo("成功", "排查名单已保存。")
 
-    def _import_json_list(
-        self,
-        validator: Callable[[list[dict[str, Any]]], Any],
-    ) -> list[dict[str, Any]] | None:
-        path = filedialog.askopenfilename(title="选择要导入的 JSON 文件", filetypes=[("JSON files", "*.json")])
-        if not path:
-            return None
-        path_obj = Path(path)
-        try:
-            data = read_json(path_obj)
-        except (FileNotFoundError, json.JSONDecodeError) as exc:
-            messagebox.showerror("导入失败", f"无法读取 {path_obj}: {exc}")
-            return None
-        try:
-            validator(data)
-        except ValueError as exc:
-            messagebox.showerror("导入失败", str(exc))
-            return None
-        return data
-
-    def _export_json_list(self, data: list[dict[str, Any]]) -> None:
-        path = filedialog.asksaveasfilename(
-            title="选择导出位置",
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json")],
+    def _import_people(self) -> None:
+        path = filedialog.askopenfilename(
+            title="选择要导入的名单文件",
+            filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
         )
         if not path:
             return
-        with Path(path).open("w", encoding="utf-8") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
-        messagebox.showinfo("导出完成", f"已导出到 {path}")
-
-    def _import_people(self) -> None:
-        data = self._import_json_list(parse_people_entries)
-        if data is None:
+        path_obj = Path(path)
+        try:
+            data = read_people_data(path_obj)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+            messagebox.showerror("导入失败", f"无法读取 {path_obj}: {exc}")
+            return
+        try:
+            parse_people_entries(data)
+        except ValueError as exc:
+            messagebox.showerror("导入失败", str(exc))
             return
         self._apply_people_change(data)
 
     def _export_people(self) -> None:
-        self._export_json_list(self.people_data)
+        path = filedialog.asksaveasfilename(
+            title="选择导出位置",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
+        )
+        if not path:
+            return
+        write_people_data(Path(path), self.people_data)
+        messagebox.showinfo("导出完成", f"已导出到 {path}")
 
     def _import_prizes(self) -> None:
-        data = self._import_json_list(parse_prize_entries)
-        if data is None:
+        path = filedialog.askopenfilename(
+            title="选择要导入的奖项文件",
+            filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
+        )
+        if not path:
+            return
+        path_obj = Path(path)
+        try:
+            data = read_prizes_data(path_obj)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+            messagebox.showerror("导入失败", f"无法读取 {path_obj}: {exc}")
+            return
+        try:
+            parse_prize_entries(data)
+        except ValueError as exc:
+            messagebox.showerror("导入失败", str(exc))
             return
         self._apply_prizes_change(data)
 
     def _export_prizes(self) -> None:
-        self._export_json_list(self.prizes_data)
+        path = filedialog.asksaveasfilename(
+            title="选择导出位置",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
+        )
+        if not path:
+            return
+        write_prizes_data(Path(path), self.prizes_data)
+        messagebox.showinfo("导出完成", f"已导出到 {path}")
 
     def _import_excluded(self) -> None:
-        data = self._import_json_list(parse_people_entries)
-        if data is None:
+        path = filedialog.askopenfilename(
+            title="选择要导入的排查名单",
+            filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
+        )
+        if not path:
+            return
+        path_obj = Path(path)
+        try:
+            data = read_people_data(path_obj)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+            messagebox.showerror("导入失败", f"无法读取 {path_obj}: {exc}")
+            return
+        try:
+            parse_people_entries(data)
+        except ValueError as exc:
+            messagebox.showerror("导入失败", str(exc))
             return
         self._apply_excluded_change(data)
 
     def _export_excluded(self) -> None:
-        self._export_json_list(self.excluded_data)
+        path = filedialog.asksaveasfilename(
+            title="选择导出位置",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
+        )
+        if not path:
+            return
+        write_people_data(Path(path), self.excluded_data)
+        messagebox.showinfo("导出完成", f"已导出到 {path}")
 
 
 def main() -> None:
