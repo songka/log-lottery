@@ -187,6 +187,12 @@ class LotteryApp:
         self.prize_combo = ttk.Combobox(top_frame, textvariable=self.prize_var, state="readonly", width=24)
         self.prize_combo.grid(row=0, column=3, sticky=tk.W, padx=5)
 
+        ttk.Checkbutton(
+            top_frame,
+            text="不排除排查名单",
+            variable=self.include_excluded_var,
+        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(5, 0))
+
         button_frame = ttk.Frame(self.main_frame, padding=10)
         button_frame.pack(fill=tk.X)
 
@@ -374,6 +380,11 @@ class LotteryApp:
                 f"{winner['timestamp']} | {winner['prize_name']} | {winner['person_name']} "
                 f"({winner['person_id']}) [{winner['source']}]"
             )
+
+    def _current_excluded_ids(self) -> set[str]:
+        if self.include_excluded_var.get():
+            return set()
+        return {person.person_id for person in self.excluded_people}
 
     def _persist_state(self) -> None:
         save_state(self.state_path, self.state)

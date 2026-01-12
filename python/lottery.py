@@ -266,6 +266,11 @@ def parse_args() -> argparse.Namespace:
         help="Path to config.json (default: python/config.json)",
     )
     parser.add_argument("--seed", type=int, help="Random seed for reproducible draws")
+    parser.add_argument(
+        "--include-excluded",
+        action="store_true",
+        help="Include the excluded list when drawing winners",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     draw_parser = subparsers.add_parser("draw", help="Draw winners for a single prize")
