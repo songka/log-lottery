@@ -9,10 +9,14 @@ import math
 import random
 import subprocess
 import sys
+import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
-from typing import Any
+from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
+from typing import Any, Callable
+
+import pygame
+from PIL import Image, ImageTk
 
 from lottery import (
     available_prizes,
@@ -36,6 +40,442 @@ from lottery import (
     write_people_data,
     write_prizes_data,
 )
+
+
+class VisualLotteryWindow(tk.Toplevel):
+    BOUNCE = "bounce"
+    SPHERE_SLOW = "sphere_slow"
+    SPHERE_FAST = "sphere_fast"
+    RESULT = "result"
+
+    def __init__(
+        self,
+        root: tk.Tk,
+        base_dir: Path,
+        prize: Any,
+        prizes: list[Any],
+        people: list[Any],
+        state: dict[str, Any],
+        global_must_win: set[str],
+        excluded_ids: set[str],
+        background_color: str,
+        background_path: str | None,
+        background_music_path: str | None,
+        win_sound_path: str | None,
+        screen_geometry: dict[str, int] | None,
+        on_complete: Callable[[list[dict[str, Any]]], None],
+        on_close: Callable[[], None],
+    ) -> None:
+        super().__init__(root)
+        self.root = root
+        self.base_dir = base_dir
+        self.prize = prize
+        self.prizes = prizes
+        self.people = people
+        self.state = state
+        self.global_must_win = global_must_win
+        self.excluded_ids = excluded_ids
+        self.background_color = background_color or "#0b0f1c"
+        self.background_path = background_path
+        self.background_music_path = background_music_path
+        self.win_sound_path = win_sound_path
+        self.screen_geometry = screen_geometry
+        self.on_complete = on_complete
+        self.on_close = on_close
+
+        self.title("视觉大屏模式")
+        if self.screen_geometry:
+            width = self.screen_geometry.get("width")
+            height = self.screen_geometry.get("height")
+            x = self.screen_geometry.get("x", 0)
+            y = self.screen_geometry.get("y", 0)
+            if width and height:
+                self.geometry(f"{width}x{height}+{x}+{y}")
+            else:
+                self.geometry(f"+{x}+{y}")
+        self.attributes("-fullscreen", True)
+        self.protocol("WM_DELETE_WINDOW", self._handle_close)
+        self.bind("<Escape>", lambda event: self._handle_close())
+        self.bind("<space>", self._handle_space)
+
+        self.control_bar = ttk.Frame(self, padding=8)
+        self.control_bar.pack(fill=tk.X)
+        ttk.Label(self.control_bar, text="当前奖项:").pack(side=tk.LEFT)
+        self.prize_var = tk.StringVar(value=self._format_prize_label(self.prize))
+        self.prize_combo = ttk.Combobox(self.control_bar, textvariable=self.prize_var, state="readonly", width=32)
+        self.prize_combo.pack(side=tk.LEFT, padx=6)
+        self.prize_combo.bind("<<ComboboxSelected>>", self._handle_prize_change)
+        ttk.Label(self.control_bar, text="空格切换流程 (间隔>=1秒)").pack(side=tk.LEFT, padx=12)
+
+        self.canvas = tk.Canvas(self, bg=self.background_color, highlightthickness=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.bind("<Configure>", self._handle_resize)
+
+        self.background_image = None
+        self.background_original = None
+        self.background_id = None
+
+        self.drawn_ids = {winner["person_id"] for winner in self.state["winners"]}
+        self.last_space_time = 0.0
+        self.state_mode = self.BOUNCE
+        self.items: list[dict[str, Any]] = []
+        self.sphere_points: list[dict[str, Any]] = []
+        self.after_id = None
+        self.rotation_speed = 0.01
+        self.rotation_angle = 0.0
+        self.rotation_angle_y = 0.0
+        self.projection_distance = 800.0
+        self.base_font_size = 14
+        self.particles: list[dict[str, Any]] = []
+        self.audio_ready = False
+        self.win_sound = None
+        self.music_ready = False
+
+        self._refresh_prize_options()
+        self._load_background()
+        self._init_audio()
+        self._build_bounce_items()
+        self._animate()
+
+    def _handle_close(self) -> None:
+        if self.after_id:
+            self.after_cancel(self.after_id)
+            self.after_id = None
+        if self.music_ready:
+            try:
+                pygame.mixer.music.stop()
+            except pygame.error:
+                pass
+        self.destroy()
+        if self.on_close:
+            self.on_close()
+
+    def _handle_space(self, event: tk.Event) -> None:
+        current = time.monotonic()
+        if current - self.last_space_time < 1.0:
+            return
+        self.last_space_time = current
+        if self.state_mode == self.BOUNCE:
+            self.state_mode = self.SPHERE_SLOW
+            self.rotation_speed = 0.01
+            self._build_sphere()
+        elif self.state_mode == self.SPHERE_SLOW:
+            self.state_mode = self.SPHERE_FAST
+            self.rotation_speed = 0.08
+        elif self.state_mode == self.SPHERE_FAST:
+            self.state_mode = self.RESULT
+            self._draw_results()
+
+    def _handle_resize(self, event: tk.Event) -> None:
+        self._load_background()
+
+    def _load_background(self) -> None:
+        self.canvas.configure(bg=self.background_color)
+        if not self.background_path:
+            return
+        path = resolve_path(self.base_dir, self.background_path)
+        if not path.exists():
+            return
+        if self.background_original is None:
+            self.background_original = Image.open(path)
+        width = self.winfo_width()
+        height = self.winfo_height()
+        if width <= 1 or height <= 1:
+            return
+        resized = self.background_original.resize((width, height), Image.Resampling.LANCZOS)
+        self.background_image = ImageTk.PhotoImage(resized)
+        if self.background_id is None:
+            self.background_id = self.canvas.create_image(0, 0, image=self.background_image, anchor=tk.NW)
+            self.canvas.tag_lower(self.background_id)
+        else:
+            self.canvas.itemconfigure(self.background_id, image=self.background_image)
+
+    def _init_audio(self) -> None:
+        if not self.win_sound_path and not self.background_music_path:
+            return
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            if self.win_sound_path:
+                path = resolve_path(self.base_dir, self.win_sound_path)
+            else:
+                path = None
+            if path and path.exists():
+                self.win_sound = pygame.mixer.Sound(str(path))
+                self.audio_ready = True
+            if self.background_music_path:
+                music_path = resolve_path(self.base_dir, self.background_music_path)
+                if music_path.exists():
+                    pygame.mixer.music.load(str(music_path))
+                    pygame.mixer.music.play(-1)
+                    self.music_ready = True
+        except pygame.error:
+            self.audio_ready = False
+            self.music_ready = False
+
+    def _build_bounce_items(self) -> None:
+        self.canvas.delete("visual_item")
+        self.canvas.delete("result")
+        self.canvas.delete("particle")
+        if self.background_id is not None:
+            self.canvas.tag_lower(self.background_id)
+        names = self._build_display_names()
+        if not names:
+            names = ["暂无人员"]
+        width = self.canvas.winfo_width() or 1200
+        height = self.canvas.winfo_height() or 700
+        self.items = []
+        for name in names[:80]:
+            x = random.uniform(80, width - 80)
+            y = random.uniform(80, height - 80)
+            item_id = self.canvas.create_text(
+                x,
+                y,
+                text=name,
+                fill="#f4f4f4",
+                font=("Helvetica", 16, "bold"),
+                tags="visual_item",
+            )
+            self.items.append(
+                {
+                    "id": item_id,
+                    "vx": random.uniform(-3.5, 3.5),
+                    "vy": random.uniform(-2.8, 2.8),
+                }
+            )
+
+    def _build_sphere(self) -> None:
+        self.canvas.delete("visual_item")
+        self.canvas.delete("result")
+        self.canvas.delete("particle")
+        if self.background_id is not None:
+            self.canvas.tag_lower(self.background_id)
+        names = self._build_display_names()
+        if not names:
+            names = ["暂无人员"]
+        if len(names) < 80:
+            repeat_times = (80 // len(names)) + 1
+            names = (names * repeat_times)[:80]
+        count = len(names)
+        radius = min(self.canvas.winfo_width() or 1200, self.canvas.winfo_height() or 700) * 0.35
+        self.projection_distance = radius * 3.0
+        self.sphere_points = []
+        for index, name in enumerate(names):
+            offset = 2 / count
+            y = index * offset - 1 + offset / 2
+            r = math.sqrt(1 - y * y)
+            phi = index * math.pi * (3 - math.sqrt(5))
+            x = math.cos(phi) * r
+            z = math.sin(phi) * r
+            item_id = self.canvas.create_text(
+                0,
+                0,
+                text=name,
+                fill="#c7e0ff",
+                font=("Helvetica", 10, "bold"),
+                tags="visual_item",
+            )
+            self.sphere_points.append(
+                {
+                    "id": item_id,
+                    "x": x * radius,
+                    "y": y * radius,
+                    "z": z * radius,
+                }
+            )
+
+    def _animate(self) -> None:
+        if self.state_mode == self.BOUNCE:
+            self._animate_bounce()
+        elif self.state_mode in {self.SPHERE_SLOW, self.SPHERE_FAST}:
+            self._animate_sphere()
+        elif self.state_mode == self.RESULT:
+            self._animate_particles()
+        self.after_id = self.after(40, self._animate)
+
+    def _animate_bounce(self) -> None:
+        width = self.canvas.winfo_width() or 1200
+        height = self.canvas.winfo_height() or 700
+        for item in self.items:
+            self.canvas.move(item["id"], item["vx"], item["vy"])
+            x, y = self.canvas.coords(item["id"])
+            if x < 40 or x > width - 40:
+                item["vx"] *= -1
+            if y < 40 or y > height - 40:
+                item["vy"] *= -1
+
+    def _animate_sphere(self) -> None:
+        width = self.canvas.winfo_width() or 1200
+        height = self.canvas.winfo_height() or 700
+        center_x = width / 2
+        center_y = height / 2
+        self.rotation_angle += self.rotation_speed
+        self.rotation_angle_y += self.rotation_speed * 0.6
+        cos_x = math.cos(self.rotation_angle)
+        sin_x = math.sin(self.rotation_angle)
+        cos_y = math.cos(self.rotation_angle_y)
+        sin_y = math.sin(self.rotation_angle_y)
+        for point in self.sphere_points:
+            y = point["y"] * cos_x - point["z"] * sin_x
+            z = point["y"] * sin_x + point["z"] * cos_x
+            x = point["x"] * cos_y - z * sin_y
+            z = point["x"] * sin_y + z * cos_y
+            factor = self.projection_distance / (self.projection_distance - z)
+            screen_x = center_x + x * factor
+            screen_y = center_y + y * factor
+            size = max(8, int(self.base_font_size * factor))
+            color_value = int(180 + 75 * min(1.0, factor - 0.4))
+            color_value = max(120, min(255, color_value))
+            color = f"#{color_value:02x}{color_value:02x}ff"
+            self.canvas.coords(point["id"], screen_x, screen_y)
+            self.canvas.itemconfigure(point["id"], font=("Helvetica", size, "bold"), fill=color)
+
+    def _draw_results(self) -> None:
+        if not self.prize:
+            return
+        winners = draw_prize(
+            self.prize,
+            self.people,
+            self.state,
+            self.global_must_win,
+            self.excluded_ids,
+        )
+        for winner in winners:
+            self.drawn_ids.add(winner["person_id"])
+        if self.on_complete:
+            self.on_complete(winners)
+        self.canvas.delete("visual_item")
+        self.canvas.delete("result")
+        self.canvas.delete("particle")
+        width = self.canvas.winfo_width() or 1200
+        height = self.canvas.winfo_height() or 700
+        prize_name = getattr(self.prize, "name", "奖项")
+        if winners:
+            names = "\n".join([f"{w['person_name']} ({w['person_id']})" for w in winners])
+        else:
+            names = "未抽出新的中奖者"
+        self.canvas.create_rectangle(
+            width * 0.2,
+            height * 0.25,
+            width * 0.8,
+            height * 0.75,
+            fill="#0d1529",
+            outline="#ffffff",
+            width=2,
+            tags="result",
+        )
+        self.canvas.create_text(
+            width / 2,
+            height * 0.35,
+            text=f"恭喜中奖 - {prize_name}",
+            fill="#ffda79",
+            font=("Helvetica", 28, "bold"),
+            tags="result",
+        )
+        self.canvas.create_text(
+            width / 2,
+            height * 0.55,
+            text=names,
+            fill="#f5f5f5",
+            font=("Helvetica", 22, "bold"),
+            tags="result",
+        )
+        self._spawn_particles()
+        if self.audio_ready and self.win_sound:
+            try:
+                self.win_sound.play()
+            except pygame.error:
+                pass
+        self._refresh_prize_options()
+
+    def _spawn_particles(self) -> None:
+        self.particles = []
+        width = self.canvas.winfo_width() or 1200
+        height = self.canvas.winfo_height() or 700
+        center_x = width / 2
+        center_y = height / 2
+        colors = ["#ff5e5b", "#ffe66d", "#00f5d4", "#9b5de5", "#f15bb5"]
+        for _ in range(120):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(2.5, 7.5)
+            vx = math.cos(angle) * speed
+            vy = math.sin(angle) * speed
+            color = random.choice(colors)
+            size = random.randint(4, 8)
+            particle_id = self.canvas.create_oval(
+                center_x - size,
+                center_y - size,
+                center_x + size,
+                center_y + size,
+                fill=color,
+                outline="",
+                tags="particle",
+            )
+            self.particles.append(
+                {
+                    "id": particle_id,
+                    "vx": vx,
+                    "vy": vy,
+                    "life": random.randint(40, 70),
+                }
+            )
+
+    def _animate_particles(self) -> None:
+        if not self.particles:
+            return
+        for particle in list(self.particles):
+            self.canvas.move(particle["id"], particle["vx"], particle["vy"])
+            particle["vy"] += 0.25
+            particle["life"] -= 1
+            if particle["life"] <= 0:
+                self.canvas.delete(particle["id"])
+                self.particles.remove(particle)
+
+    def _build_display_names(self) -> list[str]:
+        if not self.prize:
+            return [person.name for person in self.people]
+        excluded_must_win = self.global_must_win if self.prize.exclude_must_win else set()
+        excluded_must_win = excluded_must_win - set(self.prize.must_win_ids)
+        names = [
+            person.name
+            for person in self.people
+            if (
+                person.person_id not in self.excluded_ids
+                and (not self.prize.exclude_previous_winners or person.person_id not in self.drawn_ids)
+                and person.person_id not in excluded_must_win
+            )
+        ]
+        return names
+
+    def _refresh_prize_options(self) -> None:
+        options = []
+        for prize in self.prizes:
+            remaining = remaining_slots(prize, self.state)
+            options.append(f"{prize.prize_id} - {prize.name} (剩余 {remaining})")
+        self.prize_combo["values"] = options
+        current_label = self._format_prize_label(self.prize)
+        if current_label in options:
+            self.prize_var.set(current_label)
+        elif not self.prize_var.get() and options:
+            self.prize_var.set(options[0])
+
+    def _format_prize_label(self, prize: Any) -> str:
+        if not prize:
+            return ""
+        remaining = remaining_slots(prize, self.state)
+        return f"{prize.prize_id} - {prize.name} (剩余 {remaining})"
+
+    def _handle_prize_change(self, event: tk.Event) -> None:
+        label = self.prize_var.get().strip()
+        if not label:
+            return
+        prize_id = label.split(" - ", 1)[0]
+        prize = next((item for item in self.prizes if item.prize_id == prize_id), None)
+        if prize:
+            self.prize = prize
+            self.state_mode = self.BOUNCE
+            self.rotation_speed = 0.01
+            self._build_bounce_items()
 
 
 class LotteryApp:
@@ -88,6 +528,7 @@ class LotteryApp:
         self.pending_state: dict[str, Any] | None = None
         self.pending_winners: list[dict[str, Any]] = []
         self.last_space_time = 0.0
+        self.visual_window = None
 
         self._build_ui()
         self._update_login_state()
@@ -98,7 +539,16 @@ class LotteryApp:
         if not self.config_path.exists():
             messagebox.showerror("配置错误", f"未找到配置文件: {self.config_path}")
             raise SystemExit(1)
-        return read_json(self.config_path)
+        config = read_json(self.config_path)
+        config.setdefault("visual_background_color", "#0b0f1c")
+        config.setdefault("visual_background", "")
+        config.setdefault("visual_music", "")
+        config.setdefault("win_sound", "win.mp3")
+        config.setdefault("visual_screen_x", 0)
+        config.setdefault("visual_screen_y", 0)
+        config.setdefault("visual_screen_width", 0)
+        config.setdefault("visual_screen_height", 0)
+        return config
 
     def _ensure_default_files(self) -> None:
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -111,6 +561,14 @@ class LotteryApp:
                 "results_file": "results.json",
                 "results_csv": "results.csv",
                 "admin_password": "admin",
+                "visual_background_color": "#0b0f1c",
+                "visual_background": "",
+                "visual_music": "",
+                "win_sound": "win.mp3",
+                "visual_screen_x": 0,
+                "visual_screen_y": 0,
+                "visual_screen_width": 0,
+                "visual_screen_height": 0,
             }
             with self.config_path.open("w", encoding="utf-8") as handle:
                 json.dump(default_config, handle, ensure_ascii=False, indent=2)
@@ -237,6 +695,8 @@ class LotteryApp:
         ttk.Button(action_frame, text="抽取当前奖项", command=self._draw_selected).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="抽取全部奖项", command=self._draw_all).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="打开抽奖界面", command=self._open_draw_window).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="开启大屏模式", command=self._open_visual_window).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="大屏设置", command=self._open_visual_settings).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="刷新名单", command=self._refresh_winners).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="重置结果", command=self._reset_results).pack(side=tk.LEFT, padx=5)
 
@@ -554,9 +1014,163 @@ class LotteryApp:
         self.draw_window = None
         self.draw_canvas = None
 
-    def _handle_space(self, event: tk.Event) -> None:
-        import time
+    def _open_visual_window(self) -> None:
+        if self.visual_window and self.visual_window.winfo_exists():
+            self.visual_window.lift()
+            return
+        prize = None
+        selected_label = self.prize_var.get().strip()
+        if selected_label:
+            prize_id = selected_label.split(" - ", 1)[0]
+            prize = next((item for item in self.prizes if item.prize_id == prize_id), None)
+        if not prize:
+            available = available_prizes(self.prizes, self.state)
+            if not available:
+                messagebox.showwarning("提示", "当前没有可抽奖项。")
+                return
+            prize = available[0]
+        excluded_ids = self._current_excluded_ids()
+        background_color = str(self.config.get("visual_background_color", "#0b0f1c"))
+        background_path = self.config.get("visual_background") or None
+        background_music_path = self.config.get("visual_music") or None
+        win_sound_path = self.config.get("win_sound", "win.mp3") or None
+        screen_geometry = {
+            "x": int(self.config.get("visual_screen_x", 0) or 0),
+            "y": int(self.config.get("visual_screen_y", 0) or 0),
+            "width": int(self.config.get("visual_screen_width", 0) or 0),
+            "height": int(self.config.get("visual_screen_height", 0) or 0),
+        }
+        self.visual_window = VisualLotteryWindow(
+            self.root,
+            self.base_dir,
+            prize,
+            self.prizes,
+            self.people,
+            self.state,
+            self.global_must_win,
+            excluded_ids,
+            background_color,
+            background_path,
+            background_music_path,
+            win_sound_path,
+            screen_geometry,
+            self._on_visual_complete,
+            self._on_visual_closed,
+        )
 
+    def _on_visual_complete(self, winners: list[dict[str, Any]]) -> None:
+        if winners:
+            self._persist_state()
+            self._refresh_prizes()
+            self._refresh_winners()
+
+    def _on_visual_closed(self) -> None:
+        self.visual_window = None
+
+    def _open_visual_settings(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("大屏设置")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        background_color_var = tk.StringVar(value=str(self.config.get("visual_background_color", "#0b0f1c")))
+        background_path_var = tk.StringVar(value=str(self.config.get("visual_background", "")))
+        music_path_var = tk.StringVar(value=str(self.config.get("visual_music", "")))
+        win_sound_var = tk.StringVar(value=str(self.config.get("win_sound", "win.mp3")))
+        screen_x_var = tk.StringVar(value=str(self.config.get("visual_screen_x", 0)))
+        screen_y_var = tk.StringVar(value=str(self.config.get("visual_screen_y", 0)))
+        screen_width_var = tk.StringVar(value=str(self.config.get("visual_screen_width", 0)))
+        screen_height_var = tk.StringVar(value=str(self.config.get("visual_screen_height", 0)))
+
+        ttk.Label(dialog, text="背景颜色:").grid(row=0, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=background_color_var, width=30).grid(row=0, column=1, sticky=tk.W, pady=6)
+
+        def pick_color() -> None:
+            color = colorchooser.askcolor(color=background_color_var.get(), parent=dialog)
+            if color and color[1]:
+                background_color_var.set(color[1])
+
+        ttk.Button(dialog, text="选择颜色", command=pick_color).grid(row=0, column=2, padx=6)
+
+        ttk.Label(dialog, text="背景图片:").grid(row=1, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=background_path_var, width=30).grid(row=1, column=1, sticky=tk.W, pady=6)
+
+        def pick_background() -> None:
+            path = filedialog.askopenfilename(
+                title="选择背景图片",
+                filetypes=[("Image files", "*.png;*.jpg;*.jpeg;*.bmp"), ("All files", "*.*")],
+            )
+            if path:
+                background_path_var.set(self._relative_or_absolute(Path(path)))
+
+        ttk.Button(dialog, text="选择文件", command=pick_background).grid(row=1, column=2, padx=6)
+
+        ttk.Label(dialog, text="背景音乐:").grid(row=2, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=music_path_var, width=30).grid(row=2, column=1, sticky=tk.W, pady=6)
+
+        def pick_music() -> None:
+            path = filedialog.askopenfilename(
+                title="选择背景音乐",
+                filetypes=[("Audio files", "*.mp3;*.wav;*.ogg"), ("All files", "*.*")],
+            )
+            if path:
+                music_path_var.set(self._relative_or_absolute(Path(path)))
+
+        ttk.Button(dialog, text="选择文件", command=pick_music).grid(row=2, column=2, padx=6)
+
+        ttk.Label(dialog, text="中奖音乐:").grid(row=3, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=win_sound_var, width=30).grid(row=3, column=1, sticky=tk.W, pady=6)
+
+        def pick_win_sound() -> None:
+            path = filedialog.askopenfilename(
+                title="选择中奖音乐",
+                filetypes=[("Audio files", "*.mp3;*.wav;*.ogg"), ("All files", "*.*")],
+            )
+            if path:
+                win_sound_var.set(self._relative_or_absolute(Path(path)))
+
+        ttk.Button(dialog, text="选择文件", command=pick_win_sound).grid(row=3, column=2, padx=6)
+
+        ttk.Label(dialog, text="屏幕位置 X:").grid(row=4, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=screen_x_var, width=10).grid(row=4, column=1, sticky=tk.W, pady=6)
+        ttk.Label(dialog, text="屏幕位置 Y:").grid(row=4, column=2, sticky=tk.W, padx=6, pady=6)
+        ttk.Entry(dialog, textvariable=screen_y_var, width=10).grid(row=4, column=3, sticky=tk.W, pady=6)
+
+        ttk.Label(dialog, text="屏幕宽度:").grid(row=5, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=screen_width_var, width=10).grid(row=5, column=1, sticky=tk.W, pady=6)
+        ttk.Label(dialog, text="屏幕高度:").grid(row=5, column=2, sticky=tk.W, padx=6, pady=6)
+        ttk.Entry(dialog, textvariable=screen_height_var, width=10).grid(row=5, column=3, sticky=tk.W, pady=6)
+
+        info_label = ttk.Label(dialog, text="设置保存后，下次开启大屏模式生效。")
+        info_label.grid(row=6, column=0, columnspan=4, sticky=tk.W, padx=8, pady=6)
+
+        def on_save() -> None:
+            self.config["visual_background_color"] = background_color_var.get().strip() or "#0b0f1c"
+            self.config["visual_background"] = background_path_var.get().strip()
+            self.config["visual_music"] = music_path_var.get().strip()
+            self.config["win_sound"] = win_sound_var.get().strip()
+            try:
+                self.config["visual_screen_x"] = int(screen_x_var.get() or 0)
+                self.config["visual_screen_y"] = int(screen_y_var.get() or 0)
+                self.config["visual_screen_width"] = int(screen_width_var.get() or 0)
+                self.config["visual_screen_height"] = int(screen_height_var.get() or 0)
+            except ValueError:
+                messagebox.showerror("错误", "屏幕位置和尺寸必须为整数。", parent=dialog)
+                return
+            self._save_config_file()
+            dialog.destroy()
+
+        def on_cancel() -> None:
+            dialog.destroy()
+
+        button_frame = ttk.Frame(dialog, padding=10)
+        button_frame.grid(row=7, column=0, columnspan=4, sticky=tk.W)
+        ttk.Button(button_frame, text="保存", command=on_save).pack(side=tk.LEFT, padx=6)
+        ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=6)
+
+        dialog.wait_window()
+
+    def _handle_space(self, event: tk.Event) -> None:
         current = time.monotonic()
         if current - self.last_space_time < 1.0:
             return
