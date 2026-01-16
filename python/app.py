@@ -46,6 +46,7 @@ class VisualLotteryWindow(tk.Toplevel):
     BOUNCE = "bounce"
     SPHERE_SLOW = "sphere_slow"
     SPHERE_FAST = "sphere_fast"
+    SPHERE_SLOWDOWN = "sphere_slowdown"
     TRANSITION = "transition"
     RESULT = "result"
 
@@ -147,6 +148,11 @@ class VisualLotteryWindow(tk.Toplevel):
         self.transition_duration = 1.2
         self.transition_items: list[int] = []
         self.drag_offset: tuple[int, int] | None = None
+        self.slowdown_start = 0.0
+        self.slowdown_duration = 2.4
+        self.slowdown_initial_speed = 0.0
+        self.normal_geometry = ""
+        self.fullscreen_geometry = ""
         self.audio_ready = False
         self.win_sound = None
         self.music_ready = False
@@ -179,7 +185,23 @@ class VisualLotteryWindow(tk.Toplevel):
 
     def _toggle_fullscreen(self, event: tk.Event | None = None) -> None:
         self.fullscreen = not self.fullscreen
-        self.attributes("-fullscreen", self.fullscreen)
+        if self.fullscreen:
+            self.normal_geometry = self.geometry()
+            if self.screen_geometry:
+                width = self.screen_geometry.get("width")
+                height = self.screen_geometry.get("height")
+                x = self.screen_geometry.get("x", 0)
+                y = self.screen_geometry.get("y", 0)
+                if width and height:
+                    self.fullscreen_geometry = f"{width}x{height}+{x}+{y}"
+            if not self.fullscreen_geometry:
+                screen_w = self.winfo_screenwidth()
+                screen_h = self.winfo_screenheight()
+                self.fullscreen_geometry = f"{screen_w}x{screen_h}+0+0"
+            self.geometry(self.fullscreen_geometry)
+        else:
+            if self.normal_geometry:
+                self.geometry(self.normal_geometry)
 
     def _start_drag(self, event: tk.Event) -> None:
         if self.fullscreen:
@@ -210,7 +232,7 @@ class VisualLotteryWindow(tk.Toplevel):
             self.state_mode = self.SPHERE_FAST
             self.rotation_speed = 0.08
         elif self.state_mode == self.SPHERE_FAST:
-            self._start_transition()
+            self._start_slowdown()
 
     def _handle_resize(self, event: tk.Event) -> None:
         self._load_background()
@@ -351,6 +373,8 @@ class VisualLotteryWindow(tk.Toplevel):
             self._animate_bounce()
         elif self.state_mode in {self.SPHERE_SLOW, self.SPHERE_FAST}:
             self._animate_sphere()
+        elif self.state_mode == self.SPHERE_SLOWDOWN:
+            self._animate_slowdown()
         elif self.state_mode == self.TRANSITION:
             self._animate_transition()
         elif self.state_mode == self.RESULT:
@@ -393,6 +417,20 @@ class VisualLotteryWindow(tk.Toplevel):
             color = f"#{color_value:02x}{min(255, color_value + 10):02x}ff"
             self.canvas.coords(point["id"], screen_x, screen_y)
             self.canvas.itemconfigure(point["id"], font=("Helvetica", size, "bold"), fill=color)
+
+    def _start_slowdown(self) -> None:
+        self.state_mode = self.SPHERE_SLOWDOWN
+        self.slowdown_start = time.monotonic()
+        self.slowdown_initial_speed = max(self.rotation_speed, 0.02)
+
+    def _animate_slowdown(self) -> None:
+        progress = (time.monotonic() - self.slowdown_start) / self.slowdown_duration
+        eased = max(0.0, 1.0 - progress)
+        self.rotation_speed = max(0.002, self.slowdown_initial_speed * (eased**2))
+        self._animate_sphere()
+        if progress >= 1:
+            self.rotation_speed = 0.0
+            self._start_transition()
 
     def _start_transition(self) -> None:
         self.state_mode = self.TRANSITION
@@ -486,9 +524,9 @@ class VisualLotteryWindow(tk.Toplevel):
         height = self.canvas.winfo_height() or 700
         prize_name = getattr(self.prize, "name", "奖项")
         if winners:
-            names = "\n".join([f"{w['person_name']} ({w['person_id']})" for w in winners])
+            name_list = [f"{w['person_name']} ({w['person_id']})" for w in winners]
         else:
-            names = "未抽出新的中奖者"
+            name_list = ["未抽出新的中奖者"]
         self.canvas.create_oval(
             width * 0.18,
             height * 0.18,
@@ -516,18 +554,47 @@ class VisualLotteryWindow(tk.Toplevel):
             font=("Helvetica", 30, "bold"),
             tags="result",
         )
-        self.canvas.create_text(
-            width / 2,
-            height * 0.55,
-            text=names,
-            fill="#ffffff",
-            font=("Helvetica", 24, "bold"),
-            tags="result",
-        )
+        if len(name_list) == 1 and name_list[0] == "未抽出新的中奖者":
+            self.canvas.create_text(
+                width / 2,
+                height * 0.55,
+                text=name_list[0],
+                fill="#ffffff",
+                font=("Helvetica", 24, "bold"),
+                tags="result",
+            )
+        else:
+            total = len(name_list)
+            columns = 1
+            if total > 20:
+                columns = 3
+            elif total > 10:
+                columns = 2
+            rows = math.ceil(total / columns)
+            font_size = 24 if total <= 10 else 20 if total <= 20 else 18
+            col_width = (width * 0.62) / columns
+            start_x = width * 0.19 + col_width / 2
+            start_y = height * 0.48
+            for col in range(columns):
+                start_index = col * rows
+                end_index = min(start_index + rows, total)
+                if start_index >= total:
+                    break
+                column_text = "\n".join(name_list[start_index:end_index])
+                self.canvas.create_text(
+                    start_x + col * col_width,
+                    start_y,
+                    text=column_text,
+                    fill="#ffffff",
+                    font=("Helvetica", font_size, "bold"),
+                    tags="result",
+                    anchor=tk.N,
+                    justify=tk.LEFT,
+                )
         self.canvas.create_text(
             width / 2,
             height * 0.72,
-            text=" LFAF尾牙幸運時刻",
+            text="年后尾牙幸运时刻",
             fill="#5ee1ff",
             font=("Helvetica", 18, "bold"),
             tags="result",
@@ -680,8 +747,23 @@ class VisualLotteryWindow(tk.Toplevel):
         current_label = self._format_prize_label(self.prize)
         if current_label in options:
             self.prize_var.set(current_label)
-        elif not self.prize_var.get() and options:
+            return
+        if options:
             self.prize_var.set(options[0])
+        else:
+            self.prize_var.set("")
+
+    def update_prizes(self, prizes: list[Any], state: dict[str, Any]) -> None:
+        self.prizes = prizes
+        self.state = state
+        self._refresh_prize_options()
+        label = self.prize_var.get().strip()
+        if label:
+            prize_id = label.split(" - ", 1)[0]
+            self.prize = next((item for item in self.prizes if item.prize_id == prize_id), None)
+        if not self.prize and self.prizes:
+            self.prize = self.prizes[0]
+            self.prize_var.set(self._format_prize_label(self.prize))
 
     def _format_prize_label(self, prize: Any) -> str:
         if not prize:
@@ -2080,6 +2162,8 @@ class LotteryApp:
         self.prizes = parse_prize_entries(self.prizes_data)
         self.global_must_win = build_global_must_win(self.prizes)
         self._refresh_prizes()
+        if self.visual_window and self.visual_window.winfo_exists():
+            self.visual_window.update_prizes(self.prizes, self.state)
         messagebox.showinfo("成功", "奖项配置已保存。")
 
     def _save_excluded(self) -> None:
