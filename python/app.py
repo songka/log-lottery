@@ -527,7 +527,7 @@ class VisualLotteryWindow(tk.Toplevel):
         self.canvas.create_text(
             width / 2,
             height * 0.72,
-            text="年后尾牙幸运时刻",
+            text=" LFAF尾牙幸運時刻",
             fill="#5ee1ff",
             font=("Helvetica", 18, "bold"),
             tags="result",
