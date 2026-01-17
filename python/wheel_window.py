@@ -417,6 +417,8 @@ class WheelLotteryWindow(tk.Toplevel):
         for item in self.excluded_ids:
             if hasattr(item, 'person_id'): clean_excluded_ids.add(item.person_id)
             else: clean_excluded_ids.add(str(item))
+        already_won_ids = {winner["person_id"] for winner in self.lottery_state.get("winners", [])}
+        clean_excluded_ids |= already_won_ids
 
         remaining = remaining_slots(prize, self.lottery_state)
         if remaining <= 0:
@@ -465,8 +467,7 @@ class WheelLotteryWindow(tk.Toplevel):
             if hasattr(item, 'person_id'): clean_excluded_ids.add(item.person_id)
             else: clean_excluded_ids.add(str(item))
 
-        blacklist = clean_excluded_ids | excluded_must_win
-        if prize.exclude_previous_winners: blacklist |= previous_winners_set
+        blacklist = clean_excluded_ids | excluded_must_win | previous_winners_set
         
         eligible = []
         for p in self.people:
