@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 Wheel-based lottery window with Ping-Pong Auto-Scroll and Manual-Start Prize Switching.
-优化版 v21：
-1. 【荣耀榜滚动】：改为“上下往复”滚动（Ping-Pong模式）。到底部暂停->向上滚->到顶部暂停->向下滚。
-2. 【切奖逻辑】：当前奖项抽完后，自动切换到下一个奖项，但*停止*自动连抽，等待用户手动蓄力开始。
-3. 【基础功能】：保留 v20 的物理引擎、动态背景、全屏修复等所有特性。
+优化版 v22：
+1. 【荣耀榜滚动】：仅在内容溢出时触发“上下往复”滚动。
+2. 【自动连抽】：单次启动后自动排队抽完当前奖项剩余名额。
+3. 【切奖逻辑】：当前奖项抽完后自动切换，但进入等待状态需手动蓄力再开始。
+4. 【总榜优化】：3 列布局 + 向上循环滚动。
 """
 
 from __future__ import annotations
@@ -108,7 +109,6 @@ class WheelLotteryWindow(tk.Toplevel):
         self.decel_factor = 0.04    
         
         # 队列
-        self.pending_state: dict[str, Any] | None = None
         self.pending_winners: list[dict[str, Any]] = []
         self.target_queue: list[int] = [] 
         self.revealed_winners: list[str] = []
@@ -129,6 +129,9 @@ class WheelLotteryWindow(tk.Toplevel):
         self.scroll_after_id = None
         self.scroll_direction = 1 # 1向下, -1向上
         self.is_scroll_pausing = False
+        self.summary_scroll_after_id = None
+        self.summary_scroll_speed = 0.6
+        self.summary_scroll_margin = 160
         
         self._build_ui()
         self._bind_controls()
@@ -247,6 +250,7 @@ class WheelLotteryWindow(tk.Toplevel):
     def _handle_close(self) -> None:
         if self.draw_after_id: self.after_cancel(self.draw_after_id)
         if self.scroll_after_id: self.after_cancel(self.scroll_after_id)
+        if self.summary_scroll_after_id: self.after_cancel(self.summary_scroll_after_id)
         self.destroy()
         if self.on_close: self.on_close()
 
@@ -256,6 +260,17 @@ class WheelLotteryWindow(tk.Toplevel):
         self.is_scroll_pausing = False
         self._auto_scroll_tick()
 
+    def _history_overflows(self) -> bool:
+        if self.history_listbox.size() == 0:
+            return False
+        height = self.history_listbox.winfo_height()
+        if height <= 1:
+            return False
+        first_index = self.history_listbox.nearest(0)
+        last_index = self.history_listbox.nearest(height - 1)
+        visible_count = max(0, last_index - first_index + 1)
+        return self.history_listbox.size() > visible_count
+
     def _auto_scroll_tick(self):
         if self.is_scroll_pausing:
             # 暂停中，暂不移动，仅循环等待
@@ -263,6 +278,9 @@ class WheelLotteryWindow(tk.Toplevel):
             return
 
         if self.history_listbox.size() > 0:
+            if not self._history_overflows():
+                self.scroll_after_id = self.after(200, self._auto_scroll_tick)
+                return
             # 获取可视范围 (0.0 ~ 1.0)
             first_vis, last_vis = self.history_listbox.yview()
             
@@ -394,38 +412,37 @@ class WheelLotteryWindow(tk.Toplevel):
         prize_id = prize_label.split(" - ", 1)[0]
         prize = next((p for p in self.prizes if p.prize_id == prize_id), None)
         if not prize: return
-        
-        preview_state = copy.deepcopy(self.lottery_state)
-        
+
         clean_excluded_ids = set()
         for item in self.excluded_ids:
             if hasattr(item, 'person_id'): clean_excluded_ids.add(item.person_id)
             else: clean_excluded_ids.add(str(item))
 
-        current_winners = [w for w in preview_state["winners"] if w["prize_id"] == prize.prize_id]
-        current_count = len(current_winners)
-        
-        if current_count >= prize.count:
+        remaining = remaining_slots(prize, self.lottery_state)
+        if remaining <= 0:
             return
 
-        temp_prize = copy.copy(prize)
-        temp_prize.count = current_count + 1
-        
-        winners = draw_prize(temp_prize, self.people, preview_state, self.global_must_win, clean_excluded_ids)
+        preview_state = copy.deepcopy(self.lottery_state)
+        winners = draw_prize(prize, self.people, preview_state, self.global_must_win, clean_excluded_ids)
 
         if not winners:
             self.phase = "idle"
             messagebox.showinfo("结果", "未能抽出中奖者。")
             return
 
-        self.pending_state = preview_state
-        self.pending_winners = winners 
+        self.pending_winners = [] 
         self.target_queue = []
 
         for winner in winners:
             target_idx = next((item["index"] for item in self.wheel_names if item["id"] == winner["person_id"]), -1)
             if target_idx != -1:
+                self.pending_winners.append(winner)
                 self.target_queue.append(target_idx)
+
+        if not self.target_queue:
+            self.phase = "idle"
+            self.result_var.set("无目标")
+            self._update_btn_state()
 
     def _prepare_wheel(self) -> None:
         if self.phase == "wait_for_manual":
@@ -561,6 +578,9 @@ class WheelLotteryWindow(tk.Toplevel):
                     self._init_time_physics(self.locked_charge)
                     self.result_var.set("自动连抽中...")
                     self._update_btn_state()
+                elif self.phase == "wait_for_manual":
+                    self.result_var.set("等待蓄力开始下一轮...")
+                    self._update_btn_state()
                 elif self.phase != "summary" and self.phase != "idle": 
                     # 这里的 idle 检查是为了配合 switch_prize 设置的 idle
                     self.phase = "finished"
@@ -596,24 +616,36 @@ class WheelLotteryWindow(tk.Toplevel):
         if prize_label:
             current_id = prize_label.split(" - ")[0]
             current_prize = next((p for p in self.prizes if p.prize_id == current_id), None)
-            if current_prize and remaining_slots(current_prize, self.lottery_state) > 0:
-                self._start_draw_logic() # 还有名额，继续当前奖项连抽
+            if current_prize:
+                remaining = remaining_slots(current_prize, self.lottery_state)
+                if remaining > 0:
+                    self.phase = "wait_for_manual"
+                    self.result_var.set(f"当前奖项剩余 {remaining} 个，请蓄力继续")
+                    self._update_btn_state()
                 return
 
         # 2. 当前抽完了，找下一个
+        next_prize = None
+        start_index = -1
+        if prize_label:
+            current_id = prize_label.split(" - ")[0]
+            start_index = next((i for i, prize in enumerate(self.prizes) if prize.prize_id == current_id), -1)
+        for prize in self.prizes[start_index + 1:]:
+            if remaining_slots(prize, self.lottery_state) > 0:
+                next_prize = prize
+                break
+
         options = self.prize_combo["values"]
         next_option = None
-        for opt in options:
-            if "剩余" in opt and "剩余 0" not in opt:
-                next_option = opt
-                break
+        if next_prize:
+            next_option = next((opt for opt in options if opt.startswith(f"{next_prize.prize_id} - ")), None)
         
         if next_option:
             self.prize_var.set(next_option)
             self._prepare_wheel() # 重置转盘为新奖项
             
             # --- v21 修改：切换后不自动开始 ---
-            self.phase = "idle" # 强制进入空闲
+            self.phase = "wait_for_manual" 
             
             new_prize_name = next_option.split(" - ")[1].split(" (")[0]
             self.result_var.set(f"已切换至：{new_prize_name}，请蓄力开始！")
@@ -632,8 +664,8 @@ class WheelLotteryWindow(tk.Toplevel):
         self.canvas.create_rectangle(0, 0, width, height, fill="#110517", outline="")
         
         self.canvas.create_text(width/2, 100, text="🏆 中奖总榜 🏆", font=("Microsoft YaHei UI", 36, "bold"), fill=self.colors["gold"])
-        
-        y_start = 200
+
+        y_start = 180
         winners = self.lottery_state.get("winners", [])
         
         grouped = {}
@@ -641,20 +673,73 @@ class WheelLotteryWindow(tk.Toplevel):
             p_name = w.get('prize_name', '未知奖项')
             if p_name not in grouped: grouped[p_name] = []
             grouped[p_name].append(w.get('person_name'))
-            
-        col_x = width / 4
-        count = 0
-        for prize, names in grouped.items():
-            self.canvas.create_text(col_x, y_start, text=f"✨ {prize}", font=("Microsoft YaHei UI", 18, "bold"), fill=self.colors["cyan"], anchor="n")
-            names_text = "\n".join(names)
-            self.canvas.create_text(col_x, y_start + 40, text=names_text, font=("Microsoft YaHei UI", 14), fill="white", anchor="n")
-            
-            count += 1
-            if count % 2 == 0:
-                col_x = width / 4
-                y_start += 300 
-            else:
-                col_x += width / 2
+
+        ordered_prizes = []
+        for prize in self.prizes:
+            if prize.name in grouped:
+                ordered_prizes.append((prize.name, grouped[prize.name]))
+        for prize_name, names in grouped.items():
+            if prize_name not in {item[0] for item in ordered_prizes}:
+                ordered_prizes.append((prize_name, names))
+
+        columns = 3
+        column_width = width / columns
+        column_positions = [column_width * (i + 0.5) for i in range(columns)]
+        column_heights = [y_start] * columns
+
+        header_height = 28
+        line_height = 20
+        block_gap = 26
+
+        for idx, (prize_name, names) in enumerate(ordered_prizes):
+            col = idx % columns
+            x = column_positions[col]
+            y = column_heights[col]
+            self.canvas.create_text(
+                x,
+                y,
+                text=f"✨ {prize_name}",
+                font=("Microsoft YaHei UI", 18, "bold"),
+                fill=self.colors["cyan"],
+                anchor="n",
+                tags="summary_items",
+            )
+            names_text = "\n".join(names) if names else "暂无"
+            self.canvas.create_text(
+                x,
+                y + header_height,
+                text=names_text,
+                font=("Microsoft YaHei UI", 14),
+                fill="white",
+                anchor="n",
+                tags="summary_items",
+            )
+            names_lines = max(1, len(names))
+            block_height = header_height + names_lines * line_height + block_gap
+            column_heights[col] += block_height
+
+        self._start_summary_scroll(max(column_heights), height)
+
+    def _start_summary_scroll(self, content_height: float, canvas_height: float) -> None:
+        if self.summary_scroll_after_id:
+            self.after_cancel(self.summary_scroll_after_id)
+            self.summary_scroll_after_id = None
+
+        visible_height = canvas_height - self.summary_scroll_margin
+        if content_height <= visible_height:
+            return
+
+        def _tick():
+            if self.phase != "summary":
+                return
+            self.canvas.move("summary_items", 0, -self.summary_scroll_speed)
+            bbox = self.canvas.bbox("summary_items")
+            if bbox and bbox[3] < self.summary_scroll_margin:
+                reset_y = canvas_height + 40
+                self.canvas.move("summary_items", 0, reset_y - bbox[1])
+            self.summary_scroll_after_id = self.after(40, _tick)
+
+        self.summary_scroll_after_id = self.after(40, _tick)
 
     def _speak_winner(self, text):
         if not self.tts_engine: return
@@ -671,12 +756,15 @@ class WheelLotteryWindow(tk.Toplevel):
         idx = self.target_queue.pop(0)
         winner_data = self.wheel_names[idx]
         info = winner_data['full_text']
+        winner_entry = self.pending_winners.pop(0) if self.pending_winners else None
         self.revealed_winners.append(info)
         self.winner_listbox.insert(tk.END, f"🏆 {info}")
         self.winner_listbox.see(tk.END) 
         
-        if self.on_transfer and self.pending_state:
-            self.on_transfer(self.pending_state, self.pending_winners)
+        if winner_entry:
+            self._apply_winner_to_state(winner_entry)
+            if self.on_transfer:
+                self.on_transfer(self.lottery_state, [winner_entry])
         
         try:
             prize_label = self.prize_var.get().split(" - ")[1].split(" (")[0]
@@ -697,6 +785,14 @@ class WheelLotteryWindow(tk.Toplevel):
         else:
             self.phase = "wait_for_manual"
             self._update_btn_state()
+
+    def _apply_winner_to_state(self, winner: dict[str, Any]) -> None:
+        if not winner:
+            return
+        prize_state = self.lottery_state.setdefault("prizes", {}).setdefault(winner["prize_id"], {"winners": []})
+        if winner["person_id"] not in prize_state["winners"]:
+            prize_state["winners"].append(winner["person_id"])
+        self.lottery_state.setdefault("winners", []).append(winner)
 
     def update_prizes(self, prizes: list[Any], state: dict[str, Any]) -> None:
         self.prizes = prizes
