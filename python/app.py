@@ -613,7 +613,7 @@ class LotteryApp:
             state=self.state,
             global_must_win=global_must_win,
             excluded_ids=excluded_ids,
-            on_transfer=self._handle_transfer_from_window,
+            on_transfer=self._on_wheel_transfer,
             on_close=lambda: setattr(self, "wheel_window", None),
         )
         
@@ -642,7 +642,10 @@ class LotteryApp:
         self._refresh_prizes()
         self._refresh_winners()
         self._refresh_draw_prize_list()
-
+        wheel_window = getattr(self, "wheel_window", None)
+        if wheel_window and wheel_window.winfo_exists():
+            wheel_window.update_prizes(self.prizes, self.state)
+            
     def _on_wheel_closed(self) -> None:
         self.wheel_window = None
 
@@ -819,6 +822,8 @@ class LotteryApp:
     def _refresh_draw_prize_list(self) -> None:
         if not hasattr(self, "draw_prize_list"):
             return
+        if not self.draw_prize_list.winfo_exists():
+            return
         self.draw_prize_list.delete(0, tk.END)
         for prize in self.prizes:
             remaining = remaining_slots(prize, self.state)
@@ -843,24 +848,38 @@ class LotteryApp:
             names = [person.name for person in self.people]
         if not names:
             names = ["暂无人员"]
+        count = max(40, len(names))
+        if count >= 120:
+            font_size = 8
+        elif count >= 100:
+            font_size = 9
+        elif count >= 80:
+            font_size = 10
+        elif count >= 60:
+            font_size = 11
+        else:
+            font_size = 12
+        pool = [names[i % len(names)] for i in range(count)]
         width = self.draw_canvas.winfo_width() or 800
         height = self.draw_canvas.winfo_height() or 500
-        cols = 10
-        rows = 6
-        needed = cols * rows
-        pool = [names[i % len(names)] for i in range(needed)]
+        center_x = width / 2
+        center_y = height / 2
+        radius = min(width, height) * 0.35
         self.draw_items = []
-        cell_w = width / cols
-        cell_h = height / rows
         for idx, name in enumerate(pool):
-            col = idx % cols
-            row = idx // cols
-            x = col * cell_w + cell_w / 2
-            y = row * cell_h + cell_h / 2
-            item_id = self.draw_canvas.create_text(x, y, text=name, fill="#f2f2f2", font=("Helvetica", 12, "bold"))
-            self.draw_items.append({"id": item_id, "vx": 1.5, "vy": 1.2})
-        self.draw_phase = "idle"
-        self._animate_idle_grid()
+            angle = (2 * 3.1416 / count) * idx
+            x = center_x + radius * math.cos(angle)
+            y = center_y + radius * math.sin(angle)
+            angle_deg = -math.degrees(angle)
+            item_id = self.draw_canvas.create_text(
+                x,
+                y,
+                text=name,
+                fill="#ffd1e8",
+                font=("Helvetica", font_size, "bold"),
+                angle=angle_deg,
+            )
+            self.draw_items.append({"id": item_id, "angle": angle, "radius": radius})
 
     def _animate_idle_grid(self) -> None:
         if not self.draw_canvas or self.draw_phase != "idle":
@@ -898,6 +917,16 @@ class LotteryApp:
         if not names:
             names = ["暂无人员"]
         count = max(40, len(names))
+        if count >= 120:
+            font_size = 8
+        elif count >= 100:
+            font_size = 9
+        elif count >= 80:
+            font_size = 10
+        elif count >= 60:
+            font_size = 11
+        else:
+            font_size = 12
         pool = [names[i % len(names)] for i in range(count)]
         width = self.draw_canvas.winfo_width() or 800
         height = self.draw_canvas.winfo_height() or 500
@@ -909,7 +938,15 @@ class LotteryApp:
             angle = (2 * 3.1416 / count) * idx
             x = center_x + radius * math.cos(angle)
             y = center_y + radius * math.sin(angle)
-            item_id = self.draw_canvas.create_text(x, y, text=name, fill="#ffd1e8", font=("Helvetica", 10, "bold"))
+            angle_deg = -math.degrees(angle)
+            item_id = self.draw_canvas.create_text(
+                x,
+                y,
+                text=name,
+                fill="#ffd1e8",
+                font=("Helvetica", font_size, "bold"),
+                angle=angle_deg,
+            )
             self.draw_items.append({"id": item_id, "angle": angle, "radius": radius})
 
     def _animate_ball(self) -> None:

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Wheel-based lottery window with auto-scaling text and remote control support.
-优化版 v2：解决姓名显示不全、支持主窗口联动控制。
+Wheel-based lottery window with Ping-Pong Auto-Scroll and Manual-Start Prize Switching.
+优化版 v21：
+1. 【荣耀榜滚动】：改为“上下往复”滚动（Ping-Pong模式）。到底部暂停->向上滚->到顶部暂停->向下滚。
+2. 【切奖逻辑】：当前奖项抽完后，自动切换到下一个奖项，但*停止*自动连抽，等待用户手动蓄力开始。
+3. 【基础功能】：保留 v20 的物理引擎、动态背景、全屏修复等所有特性。
 """
 
 from __future__ import annotations
@@ -10,15 +13,22 @@ import copy
 import math
 import random
 import time
+import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, simpledialog
 from typing import Any, Callable
+
+try:
+    import pyttsx3
+    TTS_AVAILABLE = True
+except ImportError:
+    TTS_AVAILABLE = False
 
 from lottery import draw_prize, remaining_slots
 
 
 class WheelLotteryWindow(tk.Toplevel):
-    """Lottery window that renders a full spinning wheel."""
+    """Lottery window specifically designed for Projector/Big Screen."""
 
     def __init__(
         self,
@@ -27,7 +37,7 @@ class WheelLotteryWindow(tk.Toplevel):
         people: list[Any],
         state: dict[str, Any],
         global_must_win: set[str],
-        excluded_ids: set[str],
+        excluded_ids: set[str] | list[Any],
         on_transfer: Callable[[dict[str, Any], list[dict[str, Any]]], None],
         on_close: Callable[[], None],
     ) -> None:
@@ -35,223 +45,381 @@ class WheelLotteryWindow(tk.Toplevel):
         self.root = root
         self.prizes = prizes
         self.people = people
-        self.state = state
+        self.lottery_state = state 
         self.global_must_win = global_must_win
         self.excluded_ids = excluded_ids
         self.on_transfer = on_transfer
         self.on_close = on_close
 
-        self.title("幸运大转盘")
-        self.geometry("1280x800")
-        self.protocol("WM_DELETE_WINDOW", self._handle_close)
-        self.configure(bg="#1a1c29")
-
-        self.prize_var = tk.StringVar()
-        self.result_var = tk.StringVar(value="等待开始...")
+        self.title("幸运大转盘 - 终极版")
         
-        # 内部状态
-        self.phase = "idle"
-        self.wheel_rotation = 0.0
+        # 默认大窗口
+        self.geometry("1440x900")
+        self.is_fullscreen = False
+        
+        # --- 配色方案 (Cyberpunk Nebula) ---
+        self.colors = {
+            "bg_canvas": "#0F0B15",    
+            "panel_bg": "#1A1625",     
+            "panel_border": "#332a45", 
+            "gold": "#FFD700",
+            "cyan": "#00F5D4",
+            "red": "#FF2E63",
+            "text_main": "#FFFFFF",
+            "wheel_colors": ["#FF2E63", "#00F5D4", "#F9F871", "#FF9F1C", "#9D4EDD"] 
+        }
+        self.configure(bg=self.colors["panel_bg"])
+
+        # 变量
+        self.title_text_var = tk.StringVar(value="✨ 2025 年度盛典 ✨")
+        self.prize_var = tk.StringVar()
+        self.result_var = tk.StringVar(value="等待蓄力...")
+        
+        # TTS
+        self.tts_engine = None
+        if TTS_AVAILABLE:
+            try:
+                self.tts_engine = pyttsx3.init()
+                self.tts_engine.setProperty('rate', 180) 
+            except Exception:
+                pass 
+
+        # --- 核心状态 ---
+        self.phase = "idle" 
+        self.is_auto_playing = True 
+        
+        # --- 物理/动画参数 ---
+        self.wheel_rotation = 0.0 
         self.current_speed = 0.0
         self.wheel_names: list[dict] = [] 
         self.segment_angle = 0.0
         
-        # 抽奖队列
+        # 物理引擎 V3
+        self.charge_power = 0.0     
+        self.locked_charge = 0.0    
+        self.charge_speed = 0.015   
+        self.space_held = False    
+        
+        self.spin_start_time = 0.0  
+        self.spin_duration = 0.0    
+        self.brake_duration = 0.0   
+        
+        self.target_rotation = 0.0
+        self.decel_factor = 0.04    
+        
+        # 队列
         self.pending_state: dict[str, Any] | None = None
         self.pending_winners: list[dict[str, Any]] = []
-        self.target_queue: list[int] = []
+        self.target_queue: list[int] = [] 
         self.revealed_winners: list[str] = []
         
-        # 动画控制
-        self.last_time = 0.0
-        self.pause_start_time = 0.0
-        self.pause_duration = 2.0
-        self.draw_after_id: str | None = None
-        
-        self.colors = ["#FF5E5B", "#00F5D4", "#FFE66D"] 
+        # 视觉特效
+        self.bg_particles = [] 
+        for _ in range(40):
+            self.bg_particles.append(self._create_particle())
 
+        # 计时器
+        self.last_time = 0.0
+        self.auto_wait_start_time = 0.0
+        self.auto_wait_duration = 2.0 
+        self.draw_after_id: str | None = None
+        self.anim_frame = 0 
+        
+        # --- 滚动条相关 (v21优化) ---
+        self.scroll_after_id = None
+        self.scroll_direction = 1 # 1向下, -1向上
+        self.is_scroll_pausing = False
+        
         self._build_ui()
+        self._bind_controls()
         self._refresh_prize_options()
+        self._refresh_history_list() 
         self._animate()
+        self._start_auto_scroll() 
+
+    def _create_particle(self):
+        return {
+            "x": random.random(),
+            "y": random.random(),
+            "size": random.randint(1, 3),
+            "speed": random.uniform(0.0003, 0.0015),
+            "color": random.choice(["#ffffff", "#00F5D4", "#FF2E63", "#443366"])
+        }
 
     def _build_ui(self) -> None:
-        """Create the layout."""
-        header = tk.Frame(self, bg="#2b2d3e", height=60)
-        header.pack(fill=tk.X)
+        """Frame + Grid 布局"""
+        main_container = tk.Frame(self, bg=self.colors["panel_bg"])
+        main_container.pack(fill=tk.BOTH, expand=True)
+
+        # ================= 左侧面板 =================
+        left_sidebar = tk.Frame(main_container, bg=self.colors["panel_bg"], width=320)
+        left_sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        left_sidebar.pack_propagate(False)
+
+        # 标题区
+        title_frame = tk.Frame(left_sidebar, bg=self.colors["panel_bg"], pady=30)
+        title_frame.pack(fill=tk.X)
+        self.title_label = tk.Label(title_frame, textvariable=self.title_text_var, font=("Microsoft YaHei UI", 18, "bold"), bg=self.colors["panel_bg"], fg=self.colors["gold"], wraplength=300)
+        self.title_label.pack()
+        self.title_label.bind("<Double-Button-1>", self._edit_title)
+        tk.Label(title_frame, text="(双击修改标题)", font=("Arial", 8), bg=self.colors["panel_bg"], fg="#666").pack(pady=2)
+
+        tk.Label(left_sidebar, text="🏆 荣耀榜单", font=("Microsoft YaHei UI", 14), bg=self.colors["panel_bg"], fg="#EEE").pack(pady=(10, 5))
+
+        self.history_listbox = tk.Listbox(
+            left_sidebar, 
+            bg="#231e2e", 
+            fg="#EEE", 
+            font=("Microsoft YaHei UI", 12), 
+            highlightthickness=0, 
+            borderwidth=0,
+            activestyle="none"
+        )
+        self.history_listbox.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+
+        # ================= 右侧面板 =================
+        right_sidebar = tk.Frame(main_container, bg=self.colors["panel_bg"], width=340)
+        right_sidebar.pack(side=tk.RIGHT, fill=tk.Y)
+        right_sidebar.pack_propagate(False)
+
+        # 状态区
+        status_frame = tk.Frame(right_sidebar, bg=self.colors["panel_bg"], pady=30, padx=20)
+        status_frame.pack(fill=tk.X)
+        tk.Label(status_frame, text="当前状态", bg=self.colors["panel_bg"], fg=self.colors["cyan"], font=("Microsoft YaHei UI", 10)).pack(anchor=tk.W)
+        self.status_label = tk.Label(status_frame, textvariable=self.result_var, bg=self.colors["panel_bg"], fg=self.colors["gold"], font=("Microsoft YaHei UI", 16, "bold"), wraplength=300, justify=tk.LEFT)
+        self.status_label.pack(anchor=tk.W, pady=(5, 0))
+
+        # 本轮名单
+        tk.Label(right_sidebar, text="🎉 本轮中奖", bg=self.colors["panel_bg"], fg=self.colors["red"], font=("Microsoft YaHei UI", 12, "bold")).pack(anchor=tk.W, padx=20, pady=(20, 5))
         
-        tk.Label(header, text="✨ 幸运大转盘", font=("Microsoft YaHei UI", 18, "bold"), bg="#2b2d3e", fg="#ffffff").pack(side=tk.LEFT, padx=20, pady=10)
-        tk.Label(header, text="当前奖项:", bg="#2b2d3e", fg="#bbbbbb", font=("Microsoft YaHei UI", 12)).pack(side=tk.LEFT, padx=(20, 5))
+        list_frame = tk.Frame(right_sidebar, bg="#333", padx=1, pady=1) 
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
         
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical", bg="#222")
+        self.winner_listbox = tk.Listbox(list_frame, bg="#150a21", fg="white", font=("Microsoft YaHei UI", 13), highlightthickness=0, borderwidth=0, yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.winner_listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.winner_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 底部控制
+        ctrl_frame = tk.Frame(right_sidebar, bg=self.colors["panel_bg"], padx=20, pady=30)
+        ctrl_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        tk.Label(ctrl_frame, text="选择奖项:", bg=self.colors["panel_bg"], fg="#AAA").pack(anchor=tk.W)
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure("TCombobox", fieldbackground="#2b2d3e", background="#2b2d3e", foreground="#333", arrowcolor="white")
+        style.configure("TCombobox", fieldbackground="#333", background="#444", foreground="#fff", arrowcolor="white", font=("Microsoft YaHei UI", 12))
         
-        self.prize_combo = ttk.Combobox(header, textvariable=self.prize_var, state="readonly", width=35, font=("Microsoft YaHei UI", 11))
-        self.prize_combo.pack(side=tk.LEFT, pady=12)
+        self.prize_combo = ttk.Combobox(ctrl_frame, textvariable=self.prize_var, state="readonly", font=("Microsoft YaHei UI", 12))
+        self.prize_combo.pack(fill=tk.X, pady=(2, 15), ipady=5)
         self.prize_combo.bind("<<ComboboxSelected>>", self._handle_prize_change)
 
-        container = tk.Frame(self, bg="#1a1c29")
-        container.pack(fill=tk.BOTH, expand=True)
+        self.action_btn = tk.Button(ctrl_frame, text="按住蓄力 / 点击开始", bg=self.colors["gold"], fg="#000", font=("Microsoft YaHei UI", 16, "bold"), relief="flat", cursor="hand2")
+        self.action_btn.pack(fill=tk.X, pady=(0, 10), ipady=10)
+        self.action_btn.bind("<ButtonPress-1>", self._on_btn_down)
+        self.action_btn.bind("<ButtonRelease-1>", self._on_btn_up)
+        
+        self.reset_btn = tk.Button(ctrl_frame, text="⟳ 重置名单 (清空队列)", command=self._prepare_wheel, bg="#444", fg="#FFF", font=("Microsoft YaHei UI", 10), relief="flat", cursor="hand2")
+        self.reset_btn.pack(fill=tk.X)
 
-        self.canvas = tk.Canvas(container, bg="#1a1c29", highlightthickness=0)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=20)
+        # ================= 中间画布 =================
+        self.canvas = tk.Canvas(main_container, bg=self.colors["bg_canvas"], highlightthickness=0)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.canvas.bind("<Configure>", lambda e: self._render_wheel())
 
-        sidebar = tk.Frame(container, bg="#212332", width=300)
-        sidebar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 0))
-        sidebar.pack_propagate(False)
+    def _edit_title(self, event):
+        new_title = simpledialog.askstring("设置", "修改大屏标题：", initialvalue=self.title_text_var.get(), parent=self)
+        if new_title:
+            self.title_text_var.set(new_title)
 
-        tk.Label(sidebar, text="状态提示", bg="#212332", fg="#5ee1ff", font=("Microsoft YaHei UI", 12)).pack(anchor=tk.W, padx=20, pady=(20, 10))
-        self.status_label = tk.Label(sidebar, textvariable=self.result_var, bg="#212332", fg="#ffe66d", font=("Microsoft YaHei UI", 14, "bold"), wraplength=260, justify=tk.LEFT)
-        self.status_label.pack(anchor=tk.W, padx=20, pady=(0, 20))
+    def _bind_controls(self):
+        self.bind("<KeyPress-space>", self._on_key_down)
+        self.bind("<KeyRelease-space>", self._on_key_up)
+        self.bind("<F11>", self._toggle_fullscreen)
+        self.focus_set()
 
-        tk.Label(sidebar, text="🎉 本轮中奖名单", bg="#212332", fg="#ff5e5b", font=("Microsoft YaHei UI", 12)).pack(anchor=tk.W, padx=20, pady=(10, 5))
-        self.winner_listbox = tk.Listbox(sidebar, bg="#1a1c29", fg="white", font=("Microsoft YaHei UI", 12), highlightthickness=0, borderwidth=0, height=10)
-        self.winner_listbox.pack(fill=tk.X, padx=20, pady=5)
-
-        btn_frame = tk.Frame(sidebar, bg="#212332")
-        btn_frame.pack(fill=tk.X, padx=20, pady=20, side=tk.BOTTOM)
-
-        def create_btn(text, cmd, color="#5ee1ff"):
-            btn = tk.Button(btn_frame, text=text, command=cmd, bg=color, fg="#000000", font=("Microsoft YaHei UI", 11, "bold"), relief="flat", activebackground="white", activeforeground="black", cursor="hand2")
-            btn.pack(fill=tk.X, pady=8, ipady=5)
-            return btn
-
-        create_btn("1. 准备转盘", self._prepare_wheel, "#00f5d4")
-        create_btn("2. 开始抽奖", self._start_draw_sequence, "#ffe66d")
-        create_btn("3. 保存结果", self._transfer_draw, "#ff5e5b")
+    def _toggle_fullscreen(self, event=None):
+        self.is_fullscreen = not self.is_fullscreen
+        self.attributes("-fullscreen", self.is_fullscreen)
+        if not self.is_fullscreen:
+            self.geometry("1440x900")
 
     def _handle_close(self) -> None:
-        if self.draw_after_id:
-            self.after_cancel(self.draw_after_id)
-            self.draw_after_id = None
+        if self.draw_after_id: self.after_cancel(self.draw_after_id)
+        if self.scroll_after_id: self.after_cancel(self.scroll_after_id)
         self.destroy()
-        if self.on_close:
-            self.on_close()
+        if self.on_close: self.on_close()
 
-    # --- 关键修改：联动控制接口 ---
-    def select_prize_by_id(self, prize_id: str) -> None:
-        """Called by main app to switch prize automatically."""
-        # 只有在空闲状态才允许外部切换，防止打断抽奖
-        if self.phase != "idle":
+    # --- 自动滚动逻辑 (v21 修正版) ---
+    def _start_auto_scroll(self):
+        self.scroll_direction = 1 # 初始向下
+        self.is_scroll_pausing = False
+        self._auto_scroll_tick()
+
+    def _auto_scroll_tick(self):
+        if self.is_scroll_pausing:
+            # 暂停中，暂不移动，仅循环等待
+            self.scroll_after_id = self.after(50, self._auto_scroll_tick)
             return
+
+        if self.history_listbox.size() > 0:
+            # 获取可视范围 (0.0 ~ 1.0)
+            first_vis, last_vis = self.history_listbox.yview()
             
-        options = self.prize_combo["values"]
-        target_option = next((opt for opt in options if opt.startswith(f"{prize_id} - ")), None)
+            # 只有当内容超出显示范围时(不能同时看到头和尾)，才需要滚动
+            if not (first_vis <= 0.0 and last_vis >= 1.0):
+                current_top = first_vis
+                
+                # 计算新位置
+                # scroll_direction: 1 向下(数值变大), -1 向上(数值变小)
+                move_step = 0.001 * self.scroll_direction
+                new_pos = current_top + move_step
+                
+                # 边界检查
+                if self.scroll_direction == 1:
+                    # 向下滚动，检查底部
+                    # 注意：yview_moveto 设置的是顶部的偏移量
+                    # 我们需要检查 last_vis 是否到达 1.0
+                    # 但 yview() 是获取当前状态，我们刚计算的是期望的 new_pos
+                    # 简单做法：应用后检查，或者预判
+                    
+                    # 预判逻辑稍微复杂，直接移动后检查最简单，但容易抖动
+                    # 这里使用逻辑推导：如果 last_vis 已经很接近 1.0
+                    if last_vis >= 0.999:
+                        self._trigger_scroll_pause_and_reverse(-1)
+                        return # 退出本次 tick
+                    
+                else:
+                    # 向上滚动，检查顶部
+                    if new_pos <= 0.0:
+                        new_pos = 0.0
+                        self._trigger_scroll_pause_and_reverse(1)
+                        # 应用 0.0
+                        self.history_listbox.yview_moveto(0.0)
+                        return
+
+                self.history_listbox.yview_moveto(new_pos)
+
+        self.scroll_after_id = self.after(50, self._auto_scroll_tick)
+
+    def _trigger_scroll_pause_and_reverse(self, new_direction):
+        """到达边界，暂停并反向"""
+        self.is_scroll_pausing = True
         
-        if target_option:
-            self.prize_var.set(target_option)
-            self._prepare_wheel() # 自动加载数据
-    # ---------------------------
+        def _resume():
+            self.scroll_direction = new_direction
+            self.is_scroll_pausing = False
+            
+        # 暂停 2 秒
+        self.after(2000, _resume)
 
-    def _refresh_prize_options(self) -> None:
-        options = []
-        for prize in self.prizes:
-            remaining = remaining_slots(prize, self.state)
-            options.append(f"{prize.prize_id} - {prize.name} (剩余 {remaining})")
-        self.prize_combo["values"] = options
-        # 如果当前没有选中或者选中的不在列表中，默认选第一个
-        current = self.prize_var.get()
-        if options and (not current or current not in options):
-            self.prize_var.set(options[0])
-            self._prepare_wheel()
-
-    def update_prizes(self, prizes: list[Any], state: dict[str, Any]) -> None:
-        self.prizes = prizes
-        self.state = state
-        # 记录当前选中的ID，尝试刷新后保持选中
-        current_val = self.prize_var.get()
-        current_id = current_val.split(" - ")[0] if current_val else None
-        
-        self._refresh_prize_options()
-        
-        if current_id:
-            # 尝试找回之前的选项
-            self.select_prize_by_id(current_id)
-
-    def _handle_prize_change(self, event: tk.Event) -> None:
-        self._prepare_wheel()
-
-    def _prepare_wheel(self) -> None:
-        if self.phase not in ["idle", "finished"]:
+    # --- 输入控制 ---
+    def _on_input_down(self):
+        if self.phase in ["spinning", "braking", "auto_wait"]:
+            self._pause_game()
             return
 
-        label = self.prize_var.get().strip()
-        if not label:
-            return
+        if (self.phase == "idle" or self.phase == "wait_for_manual") and not self.space_held:
+            self.space_held = True
+            self.charge_power = 0.0
+            self.phase = "charging"
+            self.result_var.set("⚡ 能量注入中...")
+            self._update_btn_state()
+            if not self.target_queue:
+                self._start_draw_logic() 
 
-        prize_id = label.split(" - ", 1)[0]
-        prize = next((p for p in self.prizes if p.prize_id == prize_id), None)
-        if not prize:
-            return
+    def _on_input_up(self):
+        if self.phase == "charging":
+            self.space_held = False
+            self.phase = "spinning"
+            self.is_auto_playing = True 
+            
+            # --- 核心：时间物理参数初始化 ---
+            self.locked_charge = self.charge_power 
+            self._init_time_physics(self.locked_charge)
+            
+            self.result_var.set("🚀 转盘转动中...")
+            self._update_btn_state()
+            
+            if not self.target_queue:
+                self.phase = "idle"
+                self.result_var.set("无目标")
+                self._update_btn_state()
 
-        excluded_must_win = self.global_must_win if prize.exclude_must_win else set()
-        excluded_must_win = excluded_must_win - set(prize.must_win_ids)
+    def _init_time_physics(self, power):
+        self.spin_duration = 2.0 + (43.0 * power)
+        self.spin_start_time = time.monotonic()
         
-        eligible = [
-            p for p in self.people
-            if (
-                p.person_id not in self.excluded_ids
-                and (not prize.exclude_previous_winners or p.person_id not in {w["person_id"] for w in self.state["winners"]})
-                and p.person_id not in excluded_must_win
-            )
-        ]
-
-        if not eligible:
-            self.wheel_names = []
-            self.result_var.set("该奖项无可用候选人")
-            self.winner_listbox.delete(0, tk.END)
-            self._render_wheel()
-            return
-
-        # 打乱顺序，让颜色更均匀
-        random.shuffle(eligible)
-
-        total = len(eligible)
-        self.segment_angle = 360.0 / total
-        self.wheel_names = []
+        base_brake = 5.0 + (5.0 * power)
+        random_flux = random.uniform(-2.0, 2.0)
+        self.brake_duration = max(3.0, base_brake + random_flux)
         
-        for i, person in enumerate(eligible):
-            self.wheel_names.append({
-                "index": i,
-                "id": person.person_id,
-                "name": person.name,
-                "color": self.colors[i % 3],
-                "angle_center": i * self.segment_angle + self.segment_angle / 2
-            })
+        self.current_speed = 30.0 
 
-        self.phase = "idle"
-        self.wheel_rotation = 0.0
-        self.result_var.set(f"准备就绪！共 {total} 人参与")
-        self.winner_listbox.delete(0, tk.END)
-        self.revealed_winners = []
-        self._render_wheel()
+    def _on_key_down(self, event): self._on_input_down()
+    def _on_key_up(self, event): self._on_input_up()
+    def _on_btn_down(self, event): self._on_input_down()
+    def _on_btn_up(self, event): self._on_input_up()
 
-    def _start_draw_sequence(self) -> None:
-        if self.phase != "idle" or not self.wheel_names:
-            return
+    def _pause_game(self):
+        if self.phase in ["finished", "summary"]: return
+        if not self.target_queue and self.phase not in ["spinning", "braking"]: return
 
+        self.phase = "wait_for_manual" 
+        self.is_auto_playing = False   
+        self.current_speed = 0.0       
+        self.result_var.set("⏸ 已暂停")
+        self._update_btn_state()
+
+    def _update_btn_state(self):
+        if self.phase in ["charging", "spinning", "braking", "auto_wait"]:
+            self.action_btn.config(text="STOP (点击暂停)", bg=self.colors["red"], fg="white")
+            self.prize_combo.config(state="disabled") 
+        elif self.phase == "wait_for_manual":
+             self.action_btn.config(text="继续 (长按蓄力)", bg="#666", fg="#FFF")
+             self.prize_combo.config(state="readonly") 
+        else:
+            self.action_btn.config(text="按住蓄力 / 点击开始", bg=self.colors["gold"], fg="black")
+            self.prize_combo.config(state="readonly")
+
+        if self.phase in ["idle", "wait_for_manual"]:
+            self.reset_btn.pack(fill=tk.X, pady=0, before=self.action_btn)
+        else:
+            self.reset_btn.pack_forget()
+            
+    def _start_draw_logic(self) -> None:
+        if not self.wheel_names: return
         prize_label = self.prize_var.get()
-        if not prize_label:
-            return
+        if not prize_label: return
         prize_id = prize_label.split(" - ", 1)[0]
         prize = next((p for p in self.prizes if p.prize_id == prize_id), None)
+        if not prize: return
         
-        preview_state = copy.deepcopy(self.state)
-        winners = draw_prize(
-            prize,
-            self.people,
-            preview_state,
-            self.global_must_win,
-            self.excluded_ids,
-        )
+        preview_state = copy.deepcopy(self.lottery_state)
+        
+        clean_excluded_ids = set()
+        for item in self.excluded_ids:
+            if hasattr(item, 'person_id'): clean_excluded_ids.add(item.person_id)
+            else: clean_excluded_ids.add(str(item))
+
+        current_winners = [w for w in preview_state["winners"] if w["prize_id"] == prize.prize_id]
+        current_count = len(current_winners)
+        
+        if current_count >= prize.count:
+            return
+
+        temp_prize = copy.copy(prize)
+        temp_prize.count = current_count + 1
+        
+        winners = draw_prize(temp_prize, self.people, preview_state, self.global_must_win, clean_excluded_ids)
 
         if not winners:
+            self.phase = "idle"
             messagebox.showinfo("结果", "未能抽出中奖者。")
             return
 
         self.pending_state = preview_state
-        self.pending_winners = winners
+        self.pending_winners = winners 
         self.target_queue = []
 
         for winner in winners:
@@ -259,177 +427,457 @@ class WheelLotteryWindow(tk.Toplevel):
             if target_idx != -1:
                 self.target_queue.append(target_idx)
 
-        if not self.target_queue:
-            messagebox.showerror("错误", "数据同步错误。")
+    def _prepare_wheel(self) -> None:
+        if self.phase == "wait_for_manual":
+            self.target_queue = [] 
+        elif self.target_queue or self.phase not in ["idle", "finished", "summary"]:
+             return
+
+        self.is_auto_playing = True 
+        label = self.prize_var.get().strip()
+        if not label: return
+        prize_id = label.split(" - ", 1)[0]
+        prize = next((p for p in self.prizes if p.prize_id == prize_id), None)
+        if not prize: return
+
+        prize_must_win_set = set(prize.must_win_ids)
+        excluded_must_win = self.global_must_win - prize_must_win_set if prize.exclude_must_win else set()
+        previous_winners_set = {w["person_id"] for w in self.lottery_state["winners"]}
+        clean_excluded_ids = set()
+        for item in self.excluded_ids:
+            if hasattr(item, 'person_id'): clean_excluded_ids.add(item.person_id)
+            else: clean_excluded_ids.add(str(item))
+
+        blacklist = clean_excluded_ids | excluded_must_win
+        if prize.exclude_previous_winners: blacklist |= previous_winners_set
+        
+        eligible = []
+        for p in self.people:
+            if p.person_id not in blacklist: eligible.append(p)
+
+        if not eligible:
+            self.wheel_names = []
+            self.result_var.set("无候选人")
+            self.winner_listbox.delete(0, tk.END)
+            self._render_wheel()
             return
 
-        self.phase = "spinning"
-        self.current_speed = 0.0
-        self.result_var.set("抽奖开始！")
-        self.winner_listbox.delete(0, tk.END)
-        self.last_time = time.monotonic()
+        random.shuffle(eligible)
+        
+        total = len(eligible)
+        self.segment_angle = 360.0 / total
+        self.wheel_names = []
+        random_colors = copy.copy(self.colors["wheel_colors"])
+        
+        for i, person in enumerate(eligible):
+            dept = getattr(person, 'department', '')
+            full_text = f"{dept} {person.person_id} {person.name}".strip()
+            self.wheel_names.append({
+                "index": i,
+                "id": person.person_id,
+                "name": person.name,
+                "full_text": full_text,
+                "color": random_colors[i % len(random_colors)],
+                "angle_center": i * self.segment_angle + self.segment_angle / 2
+            })
 
-    def _transfer_draw(self) -> None:
-        if self.phase != "finished" or not self.pending_state:
-            messagebox.showinfo("提示", "请先完成抽奖。")
-            return
-        
-        if self.on_transfer:
-            self.on_transfer(self.pending_state, self.pending_winners)
-        
-        self.pending_state = None
-        self.result_var.set("结果已保存。")
         self.phase = "idle"
+        self.wheel_rotation = 0.0 
+        self.result_var.set(f"就绪 | {prize.name}")
+        self.winner_listbox.delete(0, tk.END)
+        self.revealed_winners = []
+        self._update_btn_state()
+        self._render_wheel()
 
     def _animate(self) -> None:
+        """主循环"""
         current_time = time.monotonic()
         dt = current_time - self.last_time
         self.last_time = current_time
+        self.anim_frame += 1
+        if dt > 0.05: dt = 0.05
 
-        if self.phase == "spinning":
-            if self.current_speed < 25.0:
-                self.current_speed += 12.0 * dt
-            else:
-                self.current_speed = 25.0 
+        # 粒子
+        for p in self.bg_particles:
+            p["x"] += p["speed"] * 0.5
+            p["y"] += p["speed"]
+            if p["x"] > 1.0: p["x"] = 0
+            if p["y"] > 1.0: p["y"] = 0
+
+        # --- 物理逻辑 V3 ---
+        display_energy = 0.0 
+
+        if self.phase == "charging":
+            self.charge_power += self.charge_speed
+            if self.charge_power > 1.0: self.charge_power = 1.0
+            display_energy = self.charge_power 
             
-            if self.current_speed >= 25.0 and self.target_queue:
+            shake = (random.random() - 0.5) * 3.0 * self.charge_power
+            self.wheel_rotation += shake
+            
+            if self.charge_power < 0.3: self.encouragement_text = "⚡ 蓄力..."
+            elif self.charge_power < 0.6: self.encouragement_text = "🔥 能量注入"
+            elif self.charge_power < 0.9: self.encouragement_text = "⚠️ 高能！"
+            else: self.encouragement_text = "🚀 MAX"
+
+        elif self.phase == "spinning":
+            elapsed = current_time - self.spin_start_time
+            if elapsed < self.spin_duration:
+                progress = elapsed / self.spin_duration
+                display_energy = self.locked_charge * (1.0 - progress)
+                self.current_speed = 30.0 + math.sin(current_time * 5) * 0.5
+                self.wheel_rotation += self.current_speed
+            else:
                 self.phase = "braking"
+                self._calculate_stop_path_by_time() 
 
         elif self.phase == "braking":
-            if not self.target_queue:
-                self.phase = "finished"
-            else:
-                target_idx = self.target_queue[0]
-                target_center = self.wheel_names[target_idx]["angle_center"]
-                desired_rotation = (90 - target_center) % 360
-                current_mod = self.wheel_rotation % 360
-                dist = (desired_rotation - current_mod) % 360
-                
-                if self.current_speed > 3.0:
-                    self.current_speed -= 6.0 * dt
-                else:
-                    if dist < 10 or dist > 350:
-                        diff = desired_rotation - current_mod
-                        if diff > 180: diff -= 360
-                        if diff < -180: diff += 360
-                        
-                        self.current_speed = diff * 5.0 * dt
-                        if abs(diff) < 0.5 and abs(self.current_speed) < 0.5:
-                            self.wheel_rotation = desired_rotation
-                            self.current_speed = 0
-                            self._handle_stop()
-                    else:
-                         self.current_speed = max(1.5, self.current_speed * 0.98)
+            display_energy = 0
+            dist_remaining = self.target_rotation - self.wheel_rotation
+            step = dist_remaining * self.decel_factor
+            
+            min_speed = 0.1
+            if step < min_speed: step = min_speed
+            if step > dist_remaining: step = dist_remaining
 
-        elif self.phase == "pause":
-            if current_time - self.pause_start_time > self.pause_duration:
+            self.wheel_rotation += step
+            
+            if dist_remaining < 0.2:
+                self.wheel_rotation = self.target_rotation 
+                self._handle_stop()
+        
+        elif self.phase == "auto_wait":
+            if self.anim_frame % 5 == 0: self._create_firework()
+            
+            if current_time - self.auto_wait_start_time > self.auto_wait_duration:
+                if not self.target_queue:
+                    # 尝试切下一个奖项
+                    self._check_and_switch_prize()
+
+                # 如果有队列（说明是单抽的连续模式，或者是刚切换完奖项且用户还没操作），这里不需要自动开始
+                # v21 修改：在 auto_wait 结束时，如果是连抽中，则继续；如果是切了奖，则停止
                 if self.target_queue:
                     self.phase = "spinning"
-                    self.result_var.set("继续抽取下一位...")
-                else:
+                    self._init_time_physics(self.locked_charge)
+                    self.result_var.set("自动连抽中...")
+                    self._update_btn_state()
+                elif self.phase != "summary" and self.phase != "idle": 
+                    # 这里的 idle 检查是为了配合 switch_prize 设置的 idle
                     self.phase = "finished"
-                    self.result_var.set("所有名额抽取完毕！")
-                    self._show_fireworks()
+                    self.result_var.set("本轮结束！")
+                    self._update_btn_state()
 
-        self.wheel_rotation = (self.wheel_rotation + self.current_speed) % 360
-        self._render_wheel()
+        self._render_wheel(display_energy)
         self.draw_after_id = self.after(20, self._animate)
+    
+    def _calculate_stop_path_by_time(self):
+        if not self.target_queue: return
+        target_idx = self.target_queue[0]
+        item = self.wheel_names[target_idx]
+        target_center_angle = item["angle_center"]
+        
+        desired_mod = (90 - target_center_angle) % 360
+        current_abs = self.wheel_rotation
+        current_mod = current_abs % 360
+        rotation_needed = (desired_mod - current_mod) % 360
+        
+        avg_speed = 10.0 
+        estimated_dist = avg_speed * (self.brake_duration * 50) 
+        
+        extra_spins = math.ceil(estimated_dist / 360) * 360
+        
+        self.target_rotation = current_abs + rotation_needed + extra_spins
+        self.decel_factor = 0.04 
+
+    def _check_and_switch_prize(self):
+        """v21: 自动切换奖项，但不自动开始"""
+        # 1. 检查当前奖项剩余
+        prize_label = self.prize_var.get()
+        if prize_label:
+            current_id = prize_label.split(" - ")[0]
+            current_prize = next((p for p in self.prizes if p.prize_id == current_id), None)
+            if current_prize and remaining_slots(current_prize, self.lottery_state) > 0:
+                self._start_draw_logic() # 还有名额，继续当前奖项连抽
+                return
+
+        # 2. 当前抽完了，找下一个
+        options = self.prize_combo["values"]
+        next_option = None
+        for opt in options:
+            if "剩余" in opt and "剩余 0" not in opt:
+                next_option = opt
+                break
+        
+        if next_option:
+            self.prize_var.set(next_option)
+            self._prepare_wheel() # 重置转盘为新奖项
+            
+            # --- v21 修改：切换后不自动开始 ---
+            self.phase = "idle" # 强制进入空闲
+            
+            new_prize_name = next_option.split(" - ")[1].split(" (")[0]
+            self.result_var.set(f"已切换至：{new_prize_name}，请蓄力开始！")
+            self._update_btn_state()
+            # -------------------------------
+        else:
+            self._render_grand_summary()
+
+    def _render_grand_summary(self):
+        self.phase = "summary"
+        self.result_var.set("🎉 所有奖项抽取完毕！")
+        self.canvas.delete("all")
+        
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        self.canvas.create_rectangle(0, 0, width, height, fill="#110517", outline="")
+        
+        self.canvas.create_text(width/2, 100, text="🏆 中奖总榜 🏆", font=("Microsoft YaHei UI", 36, "bold"), fill=self.colors["gold"])
+        
+        y_start = 200
+        winners = self.lottery_state.get("winners", [])
+        
+        grouped = {}
+        for w in winners:
+            p_name = w.get('prize_name', '未知奖项')
+            if p_name not in grouped: grouped[p_name] = []
+            grouped[p_name].append(w.get('person_name'))
+            
+        col_x = width / 4
+        count = 0
+        for prize, names in grouped.items():
+            self.canvas.create_text(col_x, y_start, text=f"✨ {prize}", font=("Microsoft YaHei UI", 18, "bold"), fill=self.colors["cyan"], anchor="n")
+            names_text = "\n".join(names)
+            self.canvas.create_text(col_x, y_start + 40, text=names_text, font=("Microsoft YaHei UI", 14), fill="white", anchor="n")
+            
+            count += 1
+            if count % 2 == 0:
+                col_x = width / 4
+                y_start += 300 
+            else:
+                col_x += width / 2
+
+    def _speak_winner(self, text):
+        if not self.tts_engine: return
+        def _speak():
+            try:
+                self.tts_engine.say(text)
+                self.tts_engine.runAndWait()
+            except Exception:
+                pass
+        threading.Thread(target=_speak, daemon=True).start()
 
     def _handle_stop(self):
-        if not self.target_queue:
-            return
+        if not self.target_queue: return
         idx = self.target_queue.pop(0)
         winner_data = self.wheel_names[idx]
-        info = f"{winner_data['name']} ({winner_data['id']})"
+        info = winner_data['full_text']
         self.revealed_winners.append(info)
         self.winner_listbox.insert(tk.END, f"🏆 {info}")
-        self.result_var.set(f"恭喜！{info}")
+        self.winner_listbox.see(tk.END) 
         
-        if self.target_queue:
-            self.phase = "pause"
-            self.pause_start_time = time.monotonic()
-        else:
-            self.phase = "finished"
-            self.result_var.set("抽奖完成！")
-            self._show_fireworks()
+        if self.on_transfer and self.pending_state:
+            self.on_transfer(self.pending_state, self.pending_winners)
+        
+        try:
+            prize_label = self.prize_var.get().split(" - ")[1].split(" (")[0]
+        except Exception:
+            prize_label = "奖品"
+            
+        self.result_var.set(f"恭喜 {winner_data['name']} 获得 {prize_label}！")
+        
+        parts = info.split(' ')
+        speak_text = f"恭喜 {parts[-1]} 获得 {prize_label}"
+        self._speak_winner(speak_text)
+        self._refresh_history_list() 
 
-    def _render_wheel(self) -> None:
+        if self.is_auto_playing:
+            self.phase = "auto_wait"
+            self.auto_wait_start_time = time.monotonic()
+            self._update_btn_state()
+        else:
+            self.phase = "wait_for_manual"
+            self._update_btn_state()
+
+    def update_prizes(self, prizes: list[Any], state: dict[str, Any]) -> None:
+        self.prizes = prizes
+        self.lottery_state = state
+        
+        current_val = self.prize_var.get()
+        current_id = current_val.split(" - ")[0] if current_val else None
+        
+        self._refresh_prize_options()
+        self._refresh_history_list()
+        
+        is_busy = bool(self.target_queue) or (self.phase not in ["idle", "finished", "wait_for_manual"])
+        
+        if current_id:
+            if not is_busy:
+                self.select_prize_by_id(current_id)
+            else:
+                options = self.prize_combo["values"]
+                target_option = next((opt for opt in options if opt.startswith(f"{current_id} - ")), None)
+                if target_option:
+                    self.prize_var.set(target_option)
+
+    def select_prize_by_id(self, prize_id: str) -> None:
+        options = self.prize_combo["values"]
+        target_option = next((opt for opt in options if opt.startswith(f"{prize_id} - ")), None)
+        if target_option:
+            self.prize_var.set(target_option)
+            self._prepare_wheel()
+
+    def _refresh_prize_options(self) -> None:
+        options = []
+        for prize in self.prizes:
+            remaining = remaining_slots(prize, self.lottery_state)
+            if remaining > 0:
+                options.append(f"{prize.prize_id} - {prize.name} (剩余 {remaining})")
+            
+        self.prize_combo["values"] = options
+        
+        current = self.prize_var.get()
+        if options and (not current or current not in options):
+            self.prize_var.set(options[0])
+            self._prepare_wheel()
+        elif not options:
+            self.prize_var.set("") 
+
+    def _refresh_history_list(self) -> None:
+        if not hasattr(self, "history_listbox"): return
+        self.history_listbox.delete(0, tk.END)
+        
+        winners = self.lottery_state.get("winners", [])
+        for w in reversed(winners):
+            name = w.get('person_name', '未知')
+            prize = w.get('prize_name', '奖品')
+            self.history_listbox.insert(tk.END, f"🎗 {prize} - {name}")
+
+    def _handle_prize_change(self, event: tk.Event) -> None:
+        if self.phase in ["idle", "finished", "wait_for_manual"]:
+             self.target_queue = [] 
+             self._prepare_wheel()
+
+    # ---------------- 渲染 ----------------
+    def _create_firework(self):
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        x = random.randint(50, width-50)
+        y = random.randint(50, height-50)
+        color = random.choice(self.colors["wheel_colors"])
+        size = random.randint(5, 15)
+        self.canvas.create_oval(x, y, x+size, y+size, fill=color, tags="firework")
+        self.root.after(500, lambda: self.canvas.delete("firework"))
+
+    def _draw_text_with_outline(self, x, y, text, font, text_color, outline_color, thickness=2, tags=None, justify=tk.CENTER):
+        for dx in range(-thickness, thickness+1):
+            for dy in range(-thickness, thickness+1):
+                if dx == 0 and dy == 0: continue
+                self.canvas.create_text(x+dx, y+dy, text=text, font=font, fill=outline_color, tags=tags, justify=justify)
+        self.canvas.create_text(x, y, text=text, font=font, fill=text_color, tags=tags, justify=justify)
+
+    def _render_wheel(self, display_energy=0.0) -> None:
+        if self.phase == "summary": return 
+
         self.canvas.delete("all")
         width = self.canvas.winfo_width()
         height = self.canvas.winfo_height()
-        cx, cy = width / 2, height / 2
-        radius = min(cx, cy) - 20
+        
+        for p in self.bg_particles:
+            px = p["x"] * width
+            py = p["y"] * height
+            r = p["size"]
+            self.canvas.create_oval(px, py, px+r, py+r, fill=p["color"], outline="")
+
+        top_margin = 150
+        max_diameter = min(width - 40, height - top_margin - 50)
+        radius = max_diameter / 2
+        cx = width / 2
+        cy = top_margin + radius 
         
         if not self.wheel_names:
-            self.canvas.create_text(cx, cy, text="请先准备抽奖数据", fill="#555", font=("Microsoft YaHei UI", 20))
+            self.canvas.create_text(cx, cy, text="暂无数据", fill="#555", font=("Microsoft YaHei UI", 20))
             return
 
-        # 人数少于150才显示转盘上的小字，否则太乱
-        show_small_text = len(self.wheel_names) <= 150
+        total_names = len(self.wheel_names)
+        show_small_text = total_names <= 200
         
+        if total_names >= 160: base_font_size = 6
+        elif total_names >= 120: base_font_size = 8
+        elif total_names >= 100: base_font_size = 10
+        elif total_names >= 80: base_font_size = 12
+        else: base_font_size = 14
+        
+        rotation_mod = self.wheel_rotation % 360
+        pointer_text_top = ""
+
         for item in self.wheel_names:
-            start = (item["angle_center"] - self.segment_angle/2 + self.wheel_rotation) % 360
-            self.canvas.create_arc(
-                cx - radius, cy - radius, cx + radius, cy + radius,
-                start=start, extent=self.segment_angle,
-                fill=item["color"], outline=item["color"], width=1
-            )
+            start = (item["angle_center"] - self.segment_angle/2 + rotation_mod) % 360
+            self.canvas.create_arc(cx - radius, cy - radius, cx + radius, cy + radius, start=start, extent=self.segment_angle, fill=item["color"], outline=item["color"], width=1)
             
-            # 转盘上的小字（仅绘制前几个字）
+            mid_angle = (item["angle_center"] + rotation_mod) % 360
+            dist_to_90 = abs(mid_angle - 90)
+            if dist_to_90 < self.segment_angle / 2:
+                pointer_text_top = item["full_text"]
+
             if show_small_text:
-                mid_angle_rad = math.radians(start + self.segment_angle/2)
-                tx = cx + (radius * 0.85) * math.cos(mid_angle_rad)
-                ty = cy - (radius * 0.85) * math.sin(mid_angle_rad)
-                short_name = item["name"][:4] # 只取前4个字
-                self.canvas.create_text(tx, ty, text=short_name, font=("Arial", 8, "bold"), fill="#1a1c29")
+                mid_angle_rad = math.radians(mid_angle)
+                text_radius = radius * 0.8
+                tx = cx + text_radius * math.cos(mid_angle_rad)
+                ty = cy - text_radius * math.sin(mid_angle_rad)
+                display_on_wheel = item["name"]
+                if total_names < 50: display_on_wheel = f"{item['name']}"
+                text_angle = mid_angle
+                if 90 < mid_angle < 270: text_angle += 180
+                self.canvas.create_text(tx, ty, text=display_on_wheel, font=("Microsoft YaHei UI", base_font_size, "bold"), fill="#1a1c29", angle=text_angle)
 
-        # 中心装饰
-        self.canvas.create_oval(cx - 30, cy - 30, cx + 30, cy + 30, fill="#ffffff", outline="#ffe66d", width=3)
-        self.canvas.create_text(cx, cy, text="LUCKY", font=("Arial", 10, "bold"))
+        self.canvas.create_oval(cx - 70, cy - 70, cx + 70, cy + 70, fill="#ffffff", outline=self.colors["gold"], width=4)
+        
+        center_text_big = "LUCKY"
+        center_text_small = ""
+        prize_label = self.prize_var.get()
+        if prize_label:
+            try:
+                parts = prize_label.split(" - ")
+                if len(parts) > 1:
+                    raw_name = parts[1]
+                    if " (" in raw_name:
+                        p_name = raw_name.split(" (")[0]
+                        count_part = raw_name.split("剩余 ")[1].split(")")[0]
+                        center_text_big = p_name
+                        center_text_small = f"剩 {count_part} 个"
+            except Exception:
+                pass
+        
+        self._draw_text_with_outline(cx, cy - 10, center_text_big, ("Microsoft YaHei UI", 24, "bold"), self.colors["red"], "white", thickness=2)
+        self.canvas.create_text(cx, cy + 25, text=center_text_small, font=("Microsoft YaHei UI", 12, "bold"), fill="#555")
 
-        # 指针
-        self.canvas.create_polygon(
-            cx, cy - radius + 10 + 40,
-            cx - 10, cy - radius + 10,
-            cx + 10, cy - radius + 10,
-            fill="#ff0000", outline="#ffffff", width=2
-        )
+        self.canvas.create_polygon(cx, cy - radius + 50, cx - 15, cy - radius + 10, cx + 15, cy - radius + 10, fill=self.colors["red"], outline="white", width=2)
         
-        # --- 关键修改：动态计算大字号 ---
-        current_angle_at_pointer = (90 - self.wheel_rotation) % 360
-        pointer_index = int(current_angle_at_pointer // self.segment_angle) % len(self.wheel_names)
-        current_item = self.wheel_names[pointer_index]
-        
-        display_text = current_item["name"]
-        if self.current_speed > 10.0:
-            display_text = "Rolling..."
-        
-        # 根据名字长度动态调整字号
-        name_len = len(display_text)
-        if name_len < 4:
-            font_size = 48
-        elif name_len < 8:
-            font_size = 36
-        elif name_len < 12:
-            font_size = 28
-        else:
-            font_size = 20 # 超长名字用小字号
+        if pointer_text_top:
+            bg_rect_y = cy - radius - 80
+            self.canvas.create_rectangle(cx - 250, bg_rect_y, cx + 250, bg_rect_y + 60, fill="#221833", outline=self.colors["cyan"], width=2, tags="overlay")
+            self.canvas.create_text(cx, bg_rect_y + 30, text=pointer_text_top, font=("Microsoft YaHei UI", 24, "bold"), fill=self.colors["gold"], tags="overlay")
+            self.canvas.tag_raise("overlay")
+
+        if self.phase != "finished":
+            bar_w = 40
+            bar_max_h = 400
+            bar_x = width - 60 
+            bar_bottom_y = height - 50 
             
-        self.canvas.create_text(
-            cx, cy - radius - 50, 
-            text=display_text, 
-            fill="#ffe66d", 
-            font=("Microsoft YaHei UI", font_size, "bold")
-        )
-        # ---------------------------
-
-    def _show_fireworks(self):
-        width = self.canvas.winfo_width()
-        height = self.canvas.winfo_height()
-        for _ in range(25):
-            x = random.randint(50, width-50)
-            y = random.randint(50, height-50)
-            color = random.choice(self.colors)
-            size = random.randint(5, 15)
-            self.canvas.create_oval(x, y, x+size, y+size, fill=color, tags="firework")
-        self.root.after(500, lambda: self.canvas.delete("firework"))
+            self.canvas.create_rectangle(bar_x, bar_bottom_y - bar_max_h, bar_x + bar_w, bar_bottom_y, outline="#333", width=2, fill="#111")
+            
+            fill_h = bar_max_h * display_energy
+            if fill_h < 0: fill_h = 0
+            fill_top_y = bar_bottom_y - fill_h
+            
+            if display_energy > 0.7: bar_color = self.colors["red"] 
+            elif display_energy > 0.3: bar_color = self.colors["gold"]
+            else: bar_color = self.colors["cyan"]
+            
+            self.canvas.create_rectangle(bar_x, fill_top_y, bar_x + bar_w, bar_bottom_y, fill=bar_color, outline="")
+            
+            if self.phase == "charging":
+                self.canvas.create_text(bar_x - 15, fill_top_y, text=self.encouragement_text, fill="white", font=("Microsoft YaHei UI", 16, "bold"), anchor="e")
+            
+            self.canvas.create_text(bar_x + bar_w/2, bar_bottom_y + 25, text="动能", fill="#888", font=("Microsoft YaHei UI", 9))
