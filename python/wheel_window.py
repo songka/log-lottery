@@ -111,8 +111,11 @@ class WheelLotteryWindow(tk.Toplevel):
         
         # 队列
         self.pending_winners: list[dict[str, Any]] = []
-        self.target_queue: list[int] = [] 
+        self.target_queue: list[str] = [] 
         self.revealed_winners: list[str] = []
+        self.removing_id: str | None = None
+        self.removal_scale = 1.0
+        self.post_removal_phase: str | None = None
         
         # 视觉特效
         self.bg_particles = [] 
@@ -343,13 +346,15 @@ class WheelLotteryWindow(tk.Toplevel):
     def _on_input_down(self):
         if self.phase == "summary":
             return
+        if self.phase == "removing":
+            return
         if self.phase == "prize_summary":
             if self._has_next_prize():
                 self._go_next_prize()
             else:
                 self._render_grand_summary()
             return
-        if self.phase in ["spinning", "braking", "auto_wait"]:
+        if self.phase in ["spinning", "braking", "auto_wait", "removing"]:
             self._pause_game()
             return
 
@@ -406,7 +411,10 @@ class WheelLotteryWindow(tk.Toplevel):
         self._update_btn_state()
 
     def _start_draw_logic(self) -> None:
-        if not self.wheel_names: return
+        if not self.wheel_names:
+            self._prepare_wheel()
+            if not self.wheel_names:
+                return
         prize_label = self.prize_var.get()
         if not prize_label: return
         prize_id = prize_label.split(" - ", 1)[0]
@@ -415,9 +423,9 @@ class WheelLotteryWindow(tk.Toplevel):
 
         clean_excluded_ids = set()
         for item in self.excluded_ids:
-            if hasattr(item, 'person_id'): clean_excluded_ids.add(item.person_id)
+            if hasattr(item, 'person_id'): clean_excluded_ids.add(str(item.person_id))
             else: clean_excluded_ids.add(str(item))
-        already_won_ids = {winner["person_id"] for winner in self.lottery_state.get("winners", [])}
+        already_won_ids = {str(winner["person_id"]) for winner in self.lottery_state.get("winners", [])}
         clean_excluded_ids |= already_won_ids
 
         remaining = remaining_slots(prize, self.lottery_state)
@@ -436,10 +444,16 @@ class WheelLotteryWindow(tk.Toplevel):
         self.target_queue = []
 
         for winner in winners:
-            target_idx = next((item["index"] for item in self.wheel_names if item["id"] == winner["person_id"]), -1)
+            target_id = str(winner["person_id"])
+            target_idx = next((item["index"] for item in self.wheel_names if str(item["id"]) == target_id), -1)
             if target_idx != -1:
                 self.pending_winners.append(winner)
-                self.target_queue.append(target_idx)
+                self.target_queue.append(target_id)
+
+        if not self.target_queue:
+            self.phase = "idle"
+            self.result_var.set("无目标")
+            self._update_btn_state()
 
         if not self.target_queue:
             self.phase = "idle"
@@ -461,17 +475,17 @@ class WheelLotteryWindow(tk.Toplevel):
 
         prize_must_win_set = set(prize.must_win_ids)
         excluded_must_win = self.global_must_win - prize_must_win_set if prize.exclude_must_win else set()
-        previous_winners_set = {w["person_id"] for w in self.lottery_state["winners"]}
+        previous_winners_set = {str(w["person_id"]) for w in self.lottery_state["winners"]}
         clean_excluded_ids = set()
         for item in self.excluded_ids:
-            if hasattr(item, 'person_id'): clean_excluded_ids.add(item.person_id)
+            if hasattr(item, 'person_id'): clean_excluded_ids.add(str(item.person_id))
             else: clean_excluded_ids.add(str(item))
 
         blacklist = clean_excluded_ids | excluded_must_win | previous_winners_set
         
         eligible = []
         for p in self.people:
-            if p.person_id not in blacklist: eligible.append(p)
+            if str(p.person_id) not in blacklist: eligible.append(p)
 
         if not eligible:
             self.wheel_names = []
@@ -492,7 +506,7 @@ class WheelLotteryWindow(tk.Toplevel):
             full_text = f"{dept} {person.person_id} {person.name}".strip()
             self.wheel_names.append({
                 "index": i,
-                "id": person.person_id,
+                "id": str(person.person_id),
                 "name": person.name,
                 "full_text": full_text,
                 "color": random_colors[i % len(random_colors)],
@@ -575,14 +589,24 @@ class WheelLotteryWindow(tk.Toplevel):
                     self._update_btn_state()
                 else:
                     self._show_prize_summary_if_complete()
+        elif self.phase == "removing":
+            self.removal_scale -= 0.08
+            if self.removal_scale <= 0:
+                self._finalize_removal()
 
         self._render_wheel(display_energy)
         self.draw_after_id = self.after(20, self._animate)
     
     def _calculate_stop_path_by_time(self):
         if not self.target_queue: return
-        target_idx = self.target_queue[0]
-        item = self.wheel_names[target_idx]
+        target_id = self.target_queue[0]
+        item = next((entry for entry in self.wheel_names if str(entry["id"]) == str(target_id)), None)
+        if not item:
+            self._prepare_wheel()
+            item = next((entry for entry in self.wheel_names if str(entry["id"]) == str(target_id)), None)
+        if not item:
+            self.target_queue.pop(0)
+            return
         target_center_angle = item["angle_center"]
         
         desired_mod = (90 - target_center_angle) % 360
@@ -739,8 +763,10 @@ class WheelLotteryWindow(tk.Toplevel):
 
     def _handle_stop(self):
         if not self.target_queue: return
-        idx = self.target_queue.pop(0)
-        winner_data = self.wheel_names[idx]
+        winner_id = str(self.target_queue.pop(0))
+        winner_data = next((entry for entry in self.wheel_names if str(entry["id"]) == winner_id), None)
+        if not winner_data:
+            return
         info = winner_data['full_text']
         winner_entry = self.pending_winners.pop(0) if self.pending_winners else None
         self.revealed_winners.append(info)
@@ -764,22 +790,24 @@ class WheelLotteryWindow(tk.Toplevel):
         self._speak_winner(speak_text)
         self._refresh_history_list() 
 
+        self.removing_id = str(winner_data["id"])
+        self.removal_scale = 1.0
         if not self.target_queue and self._is_current_prize_complete():
-            self.phase = "prize_summary"
-            self.result_var.set("本奖项已完成，查看结果或进入下一轮")
-            current_prize = self._get_current_prize()
-            if current_prize:
-                self._render_prize_summary(current_prize)
-            self._update_btn_state()
-            return
-
-        if self.is_auto_playing:
-            self.phase = "auto_wait"
-            self.auto_wait_start_time = time.monotonic()
-            self._update_btn_state()
+            self.post_removal_phase = "prize_summary"
+        elif self.is_auto_playing:
+            self.post_removal_phase = "auto_wait"
         else:
-            self.phase = "wait_for_manual"
-            self._update_btn_state()
+            self.post_removal_phase = "wait_for_manual"
+        self.phase = "removing"
+        self._update_btn_state()
+
+    def _apply_winner_to_state(self, winner: dict[str, Any]) -> None:
+        if not winner:
+            return
+        prize_state = self.lottery_state.setdefault("prizes", {}).setdefault(winner["prize_id"], {"winners": []})
+        if winner["person_id"] not in prize_state["winners"]:
+            prize_state["winners"].append(winner["person_id"])
+        self.lottery_state.setdefault("winners", []).append(winner)
 
     def _apply_winner_to_state(self, winner: dict[str, Any]) -> None:
         if not winner:
@@ -902,8 +930,23 @@ class WheelLotteryWindow(tk.Toplevel):
         pointer_text_top = ""
 
         for item in self.wheel_names:
-            start = (item["angle_center"] - self.segment_angle/2 + rotation_mod) % 360
-            self.canvas.create_arc(cx - radius, cy - radius, cx + radius, cy + radius, start=start, extent=self.segment_angle, fill=item["color"], outline=item["color"], width=1)
+            segment_extent = self.segment_angle
+            segment_half = self.segment_angle / 2
+            if self.phase == "removing" and self.removing_id and str(item["id"]) == self.removing_id:
+                segment_extent = self.segment_angle * max(0.0, self.removal_scale)
+                segment_half = segment_extent / 2
+            start = (item["angle_center"] - segment_half + rotation_mod) % 360
+            self.canvas.create_arc(
+                cx - radius,
+                cy - radius,
+                cx + radius,
+                cy + radius,
+                start=start,
+                extent=segment_extent,
+                fill=item["color"],
+                outline=item["color"],
+                width=1,
+            )
             
             mid_angle = (item["angle_center"] + rotation_mod) % 360
             dist_to_90 = abs(mid_angle - 90)
@@ -1035,7 +1078,7 @@ class WheelLotteryWindow(tk.Toplevel):
             else:
                 self.action_btn.config(text="展示所有中奖者", bg=self.colors["cyan"], fg="#000")
             self.prize_combo.config(state="readonly")
-        elif self.phase in ["charging", "spinning", "braking", "auto_wait"]:
+        elif self.phase in ["charging", "spinning", "braking", "auto_wait", "removing"]:
             self.action_btn.config(text="STOP (点击暂停)", bg=self.colors["red"], fg="white")
             self.prize_combo.config(state="disabled") 
         elif self.phase == "wait_for_manual":
@@ -1058,3 +1101,31 @@ class WheelLotteryWindow(tk.Toplevel):
         screen_x = root_x - (root_x % screen_w)
         screen_y = root_y - (root_y % screen_h)
         return screen_x, screen_y, screen_w, screen_h
+
+    def _finalize_removal(self) -> None:
+        if self.removing_id:
+            self.wheel_names = [item for item in self.wheel_names if str(item["id"]) != self.removing_id]
+            if self.wheel_names:
+                self.segment_angle = 360.0 / len(self.wheel_names)
+                for i, item in enumerate(self.wheel_names):
+                    item["index"] = i
+                    item["angle_center"] = i * self.segment_angle + self.segment_angle / 2
+            else:
+                self.segment_angle = 0.0
+        self.removing_id = None
+        self.removal_scale = 1.0
+        if self.post_removal_phase == "prize_summary":
+            self.phase = "prize_summary"
+            current_prize = self._get_current_prize()
+            if current_prize:
+                self._render_prize_summary(current_prize)
+            self.result_var.set("本奖项已完成，查看结果或进入下一轮")
+        elif self.post_removal_phase == "auto_wait":
+            self.phase = "auto_wait"
+            self.auto_wait_start_time = time.monotonic()
+        elif self.post_removal_phase == "wait_for_manual":
+            self.phase = "wait_for_manual"
+        else:
+            self.phase = "idle"
+        self.post_removal_phase = None
+        self._update_btn_state()
