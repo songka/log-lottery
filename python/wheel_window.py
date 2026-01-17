@@ -455,6 +455,11 @@ class WheelLotteryWindow(tk.Toplevel):
             self.result_var.set("无目标")
             self._update_btn_state()
 
+        if not self.target_queue:
+            self.phase = "idle"
+            self.result_var.set("无目标")
+            self._update_btn_state()
+
     def _prepare_wheel(self) -> None:
         if self.phase == "wait_for_manual":
             self.target_queue = [] 
@@ -795,6 +800,14 @@ class WheelLotteryWindow(tk.Toplevel):
             self.post_removal_phase = "wait_for_manual"
         self.phase = "removing"
         self._update_btn_state()
+
+    def _apply_winner_to_state(self, winner: dict[str, Any]) -> None:
+        if not winner:
+            return
+        prize_state = self.lottery_state.setdefault("prizes", {}).setdefault(winner["prize_id"], {"winners": []})
+        if winner["person_id"] not in prize_state["winners"]:
+            prize_state["winners"].append(winner["person_id"])
+        self.lottery_state.setdefault("winners", []).append(winner)
 
     def _apply_winner_to_state(self, winner: dict[str, Any]) -> None:
         if not winner:
