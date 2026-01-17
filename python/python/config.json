@@ -1,0 +1,17 @@
+{
+  "participants_file": "data/participants.csv",
+  "prizes_file": "data/prizes.csv",
+  "excluded_file": "data/excluded.csv",
+  "output_dir": "output",
+  "results_file": "results.json",
+  "results_csv": "results.csv",
+  "admin_password": "admin",
+  "visual_background_color": "#ff0000",
+  "visual_background": "",
+  "visual_music": "",
+  "win_sound": "win.mp3",
+  "visual_screen_x": 0,
+  "visual_screen_y": 0,
+  "visual_screen_width": 0,
+  "visual_screen_height": 0
+}

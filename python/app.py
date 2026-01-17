@@ -580,24 +580,59 @@ class LotteryApp:
             self.draw_window.destroy()
         self.draw_window = None
         self.draw_canvas = None
-
     def _open_wheel_window(self) -> None:
-        """Open the wheel-based draw window with sequential stops."""
-        if self.wheel_window and self.wheel_window.winfo_exists():
+        """打开转盘抽奖窗口，并确保数据完整"""
+        # 1. 检查窗口是否已打开
+        if hasattr(self, "wheel_window") and self.wheel_window and self.wheel_window.winfo_exists():
             self.wheel_window.lift()
             return
-        excluded_ids = self._current_excluded_ids()
-        self.wheel_window = WheelLotteryWindow(
-            self.root,
-            self.prizes,
-            self.people,
-            self.state,
-            self.global_must_win,
-            excluded_ids,
-            self._on_wheel_transfer,
-            self._on_wheel_closed,
-        )
 
+        # 2. 准备数据：确保所有必要的变量都已存在
+        # 如果 self.excluded_ids 不存在，则从加载函数获取
+        excluded_ids = getattr(self, "excluded_ids", None)
+        if excluded_ids is None:
+            # 尝试重新加载一次全局排查名单
+            excluded_ids = load_excluded_people(resolve_path(self.base_dir, self.config["excluded_file"]))
+        
+        # 重新同步一次最新的状态和奖项
+        self.prizes = load_prizes(resolve_path(self.base_dir, self.config["prizes_file"]))
+        self.state = load_state(resolve_path(self.base_dir, self.config["output_dir"]) / self.config["results_file"])
+        global_must_win = build_global_must_win(self.prizes)
+
+        # 3. 获取主界面当前选中的奖项ID
+        current_prize_id = None
+        current_val = self.prize_combo.get()
+        if current_val:
+             current_prize_id = current_val.split(" - ")[0]
+
+        # 4. 创建转盘窗口
+        self.wheel_window = WheelLotteryWindow(
+            root=self.root,
+            prizes=self.prizes,
+            people=self.people,
+            state=self.state,
+            global_must_win=global_must_win,
+            excluded_ids=excluded_ids,
+            on_transfer=self._handle_transfer_from_window,
+            on_close=lambda: setattr(self, "wheel_window", None),
+        )
+        
+        # 5. 如果主界面有选中奖项，立即同步给转盘
+        if current_prize_id:
+            self.wheel_window.select_prize_by_id(current_prize_id)
+    # 修改主界面的奖项选择回调
+    def _on_prize_selected(self, event: tk.Event) -> None:
+        """Handle prize selection in the main dropdown."""
+        # 原有的逻辑保持不变...
+        val = self.prize_combo.get()
+        if not val:
+            return
+        prize_id = val.split(" - ")[0]
+        
+        # 新增逻辑：如果转盘窗口开着，通知它切换奖项
+        if hasattr(self, "wheel_window") and self.wheel_window and self.wheel_window.winfo_exists():
+            self.wheel_window.select_prize_by_id(prize_id)
+            
     def _on_wheel_transfer(self, state: dict[str, Any], winners: list[dict[str, Any]]) -> None:
         """Persist wheel results back into the main application state."""
         if not winners:
