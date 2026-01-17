@@ -57,6 +57,7 @@ class WheelLotteryWindow(tk.Toplevel):
         # 默认大窗口
         self.geometry("1440x900")
         self.is_fullscreen = False
+        self.normal_geometry = ""
         
         # --- 配色方案 (Cyberpunk Nebula) ---
         self.colors = {
@@ -244,8 +245,15 @@ class WheelLotteryWindow(tk.Toplevel):
     def _toggle_fullscreen(self, event=None):
         self.is_fullscreen = not self.is_fullscreen
         self.attributes("-fullscreen", self.is_fullscreen)
-        if not self.is_fullscreen:
-            self.geometry("1440x900")
+        if self.is_fullscreen:
+            self.normal_geometry = self.geometry()
+            screen_x, screen_y, screen_w, screen_h = self._get_current_screen_geometry()
+            self.geometry(f"{screen_w}x{screen_h}+{screen_x}+{screen_y}")
+        else:
+            if self.normal_geometry:
+                self.geometry(self.normal_geometry)
+            else:
+                self.geometry("1440x900")
 
     def _handle_close(self) -> None:
         if self.draw_after_id: self.after_cancel(self.draw_after_id)
@@ -409,6 +417,8 @@ class WheelLotteryWindow(tk.Toplevel):
         for item in self.excluded_ids:
             if hasattr(item, 'person_id'): clean_excluded_ids.add(item.person_id)
             else: clean_excluded_ids.add(str(item))
+        already_won_ids = {winner["person_id"] for winner in self.lottery_state.get("winners", [])}
+        clean_excluded_ids |= already_won_ids
 
         remaining = remaining_slots(prize, self.lottery_state)
         if remaining <= 0:
@@ -457,8 +467,7 @@ class WheelLotteryWindow(tk.Toplevel):
             if hasattr(item, 'person_id'): clean_excluded_ids.add(item.person_id)
             else: clean_excluded_ids.add(str(item))
 
-        blacklist = clean_excluded_ids | excluded_must_win
-        if prize.exclude_previous_winners: blacklist |= previous_winners_set
+        blacklist = clean_excluded_ids | excluded_must_win | previous_winners_set
         
         eligible = []
         for p in self.people:
@@ -1022,7 +1031,7 @@ class WheelLotteryWindow(tk.Toplevel):
     def _update_btn_state(self):
         if self.phase == "prize_summary":
             if self._has_next_prize():
-                self.action_btn.config(text="下一轮", bg=self.colors["cyan"], fg="#000")
+                self.action_btn.config(text="下一项", bg=self.colors["cyan"], fg="#000")
             else:
                 self.action_btn.config(text="展示所有中奖者", bg=self.colors["cyan"], fg="#000")
             self.prize_combo.config(state="readonly")
@@ -1040,3 +1049,12 @@ class WheelLotteryWindow(tk.Toplevel):
             self.reset_btn.pack(fill=tk.X, pady=0, before=self.action_btn)
         else:
             self.reset_btn.pack_forget()
+
+    def _get_current_screen_geometry(self) -> tuple[int, int, int, int]:
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        root_x = self.winfo_rootx()
+        root_y = self.winfo_rooty()
+        screen_x = root_x - (root_x % screen_w)
+        screen_y = root_y - (root_y % screen_h)
+        return screen_x, screen_y, screen_w, screen_h
