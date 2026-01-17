@@ -116,6 +116,8 @@ class WheelLotteryWindow(tk.Toplevel):
         self.removing_id: str | None = None
         self.removal_scale = 1.0
         self.post_removal_phase: str | None = None
+        self.is_showing_prize_result = False
+        self.removal_particles: list[dict[str, Any]] = []
         
         # 视觉特效
         self.bg_particles = [] 
@@ -348,6 +350,12 @@ class WheelLotteryWindow(tk.Toplevel):
             return
         if self.phase == "removing":
             return
+        if self.is_showing_prize_result:
+            if self._has_next_prize():
+                self._go_next_prize()
+            else:
+                self._render_grand_summary()
+            return
         if self.phase == "prize_summary":
             if self._has_next_prize():
                 self._go_next_prize()
@@ -449,11 +457,6 @@ class WheelLotteryWindow(tk.Toplevel):
             if target_idx != -1:
                 self.pending_winners.append(winner)
                 self.target_queue.append(target_id)
-
-        if not self.target_queue:
-            self.phase = "idle"
-            self.result_var.set("无目标")
-            self._update_btn_state()
 
         if not self.target_queue:
             self.phase = "idle"
@@ -593,6 +596,9 @@ class WheelLotteryWindow(tk.Toplevel):
             self.removal_scale -= 0.08
             if self.removal_scale <= 0:
                 self._finalize_removal()
+            self._animate_removal_particles()
+        else:
+            self._animate_removal_particles()
 
         self._render_wheel(display_energy)
         self.draw_after_id = self.after(20, self._animate)
@@ -792,6 +798,7 @@ class WheelLotteryWindow(tk.Toplevel):
 
         self.removing_id = str(winner_data["id"])
         self.removal_scale = 1.0
+        self._spawn_removal_particles(winner_data)
         if not self.target_queue and self._is_current_prize_complete():
             self.post_removal_phase = "prize_summary"
         elif self.is_auto_playing:
@@ -800,14 +807,6 @@ class WheelLotteryWindow(tk.Toplevel):
             self.post_removal_phase = "wait_for_manual"
         self.phase = "removing"
         self._update_btn_state()
-
-    def _apply_winner_to_state(self, winner: dict[str, Any]) -> None:
-        if not winner:
-            return
-        prize_state = self.lottery_state.setdefault("prizes", {}).setdefault(winner["prize_id"], {"winners": []})
-        if winner["person_id"] not in prize_state["winners"]:
-            prize_state["winners"].append(winner["person_id"])
-        self.lottery_state.setdefault("winners", []).append(winner)
 
     def _apply_winner_to_state(self, winner: dict[str, Any]) -> None:
         if not winner:
@@ -993,6 +992,8 @@ class WheelLotteryWindow(tk.Toplevel):
             self.canvas.create_text(cx, bg_rect_y + 30, text=pointer_text_top, font=("Microsoft YaHei UI", 24, "bold"), fill=self.colors["gold"], tags="overlay")
             self.canvas.tag_raise("overlay")
 
+        self._render_removal_particles()
+
         if self.phase != "finished":
             bar_w = 40
             bar_max_h = 400
@@ -1064,9 +1065,11 @@ class WheelLotteryWindow(tk.Toplevel):
         if remaining > 0:
             self.phase = "wait_for_manual"
             self.result_var.set(f"当前奖项剩余 {remaining} 个，请蓄力继续")
+            self.is_showing_prize_result = False
             self._update_btn_state()
             return
         self.phase = "prize_summary"
+        self.is_showing_prize_result = True
         self.result_var.set("本奖项已完成，查看结果或进入下一轮")
         self._render_prize_summary(current_prize)
         self._update_btn_state()
@@ -1104,18 +1107,12 @@ class WheelLotteryWindow(tk.Toplevel):
 
     def _finalize_removal(self) -> None:
         if self.removing_id:
-            self.wheel_names = [item for item in self.wheel_names if str(item["id"]) != self.removing_id]
-            if self.wheel_names:
-                self.segment_angle = 360.0 / len(self.wheel_names)
-                for i, item in enumerate(self.wheel_names):
-                    item["index"] = i
-                    item["angle_center"] = i * self.segment_angle + self.segment_angle / 2
-            else:
-                self.segment_angle = 0.0
+            self._rebuild_wheel_layout(self.removing_id)
         self.removing_id = None
         self.removal_scale = 1.0
         if self.post_removal_phase == "prize_summary":
             self.phase = "prize_summary"
+            self.is_showing_prize_result = True
             current_prize = self._get_current_prize()
             if current_prize:
                 self._render_prize_summary(current_prize)
@@ -1123,9 +1120,73 @@ class WheelLotteryWindow(tk.Toplevel):
         elif self.post_removal_phase == "auto_wait":
             self.phase = "auto_wait"
             self.auto_wait_start_time = time.monotonic()
+            self.is_showing_prize_result = False
         elif self.post_removal_phase == "wait_for_manual":
             self.phase = "wait_for_manual"
+            self.is_showing_prize_result = False
         else:
             self.phase = "idle"
+            self.is_showing_prize_result = False
         self.post_removal_phase = None
         self._update_btn_state()
+
+    def _rebuild_wheel_layout(self, removed_id: str) -> None:
+        self.wheel_names = [item for item in self.wheel_names if str(item["id"]) != removed_id]
+        if self.wheel_names:
+            self.segment_angle = 360.0 / len(self.wheel_names)
+            for i, item in enumerate(self.wheel_names):
+                item["index"] = i
+                item["angle_center"] = i * self.segment_angle + self.segment_angle / 2
+        else:
+            self.segment_angle = 0.0
+
+    def _spawn_removal_particles(self, winner_data: dict[str, Any]) -> None:
+        if not winner_data:
+            return
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        top_margin = 150
+        max_diameter = min(width - 40, height - top_margin - 50)
+        radius = max_diameter / 2
+        cx = width / 2
+        cy = top_margin + radius
+        color = winner_data.get("color", self.colors["gold"])
+        for _ in range(26):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(2.5, 6.0)
+            self.removal_particles.append(
+                {
+                    "x": cx,
+                    "y": cy,
+                    "vx": math.cos(angle) * speed,
+                    "vy": math.sin(angle) * speed,
+                    "life": random.randint(18, 32),
+                    "size": random.randint(3, 6),
+                    "color": color,
+                }
+            )
+
+    def _animate_removal_particles(self) -> None:
+        if not self.removal_particles:
+            return
+        for particle in list(self.removal_particles):
+            particle["x"] += particle["vx"]
+            particle["y"] += particle["vy"]
+            particle["vy"] += 0.15
+            particle["life"] -= 1
+            if particle["life"] <= 0:
+                self.removal_particles.remove(particle)
+
+    def _render_removal_particles(self) -> None:
+        for particle in self.removal_particles:
+            x = particle["x"]
+            y = particle["y"]
+            size = particle["size"]
+            self.canvas.create_oval(
+                x - size,
+                y - size,
+                x + size,
+                y + size,
+                fill=particle["color"],
+                outline="",
+            )
