@@ -333,6 +333,14 @@ class WheelLotteryWindow(tk.Toplevel):
 
     # --- 输入控制 ---
     def _on_input_down(self):
+        if self.phase == "summary":
+            return
+        if self.phase == "prize_summary":
+            if self._has_next_prize():
+                self._go_next_prize()
+            else:
+                self._render_grand_summary()
+            return
         if self.phase in ["spinning", "braking", "auto_wait"]:
             self._pause_game()
             return
@@ -389,22 +397,6 @@ class WheelLotteryWindow(tk.Toplevel):
         self.result_var.set("⏸ 已暂停")
         self._update_btn_state()
 
-    def _update_btn_state(self):
-        if self.phase in ["charging", "spinning", "braking", "auto_wait"]:
-            self.action_btn.config(text="STOP (点击暂停)", bg=self.colors["red"], fg="white")
-            self.prize_combo.config(state="disabled") 
-        elif self.phase == "wait_for_manual":
-             self.action_btn.config(text="继续 (长按蓄力)", bg="#666", fg="#FFF")
-             self.prize_combo.config(state="readonly") 
-        else:
-            self.action_btn.config(text="按住蓄力 / 点击开始", bg=self.colors["gold"], fg="black")
-            self.prize_combo.config(state="readonly")
-
-        if self.phase in ["idle", "wait_for_manual"]:
-            self.reset_btn.pack(fill=tk.X, pady=0, before=self.action_btn)
-        else:
-            self.reset_btn.pack_forget()
-            
     def _start_draw_logic(self) -> None:
         if not self.wheel_names: return
         prize_label = self.prize_var.get()
@@ -567,25 +559,13 @@ class WheelLotteryWindow(tk.Toplevel):
             if self.anim_frame % 5 == 0: self._create_firework()
             
             if current_time - self.auto_wait_start_time > self.auto_wait_duration:
-                if not self.target_queue:
-                    # 尝试切下一个奖项
-                    self._check_and_switch_prize()
-
-                # 如果有队列（说明是单抽的连续模式，或者是刚切换完奖项且用户还没操作），这里不需要自动开始
-                # v21 修改：在 auto_wait 结束时，如果是连抽中，则继续；如果是切了奖，则停止
                 if self.target_queue:
                     self.phase = "spinning"
                     self._init_time_physics(self.locked_charge)
                     self.result_var.set("自动连抽中...")
                     self._update_btn_state()
-                elif self.phase == "wait_for_manual":
-                    self.result_var.set("等待蓄力开始下一轮...")
-                    self._update_btn_state()
-                elif self.phase != "summary" and self.phase != "idle": 
-                    # 这里的 idle 检查是为了配合 switch_prize 设置的 idle
-                    self.phase = "finished"
-                    self.result_var.set("本轮结束！")
-                    self._update_btn_state()
+                else:
+                    self._show_prize_summary_if_complete()
 
         self._render_wheel(display_energy)
         self.draw_after_id = self.after(20, self._animate)
@@ -608,51 +588,6 @@ class WheelLotteryWindow(tk.Toplevel):
         
         self.target_rotation = current_abs + rotation_needed + extra_spins
         self.decel_factor = 0.04 
-
-    def _check_and_switch_prize(self):
-        """v21: 自动切换奖项，但不自动开始"""
-        # 1. 检查当前奖项剩余
-        prize_label = self.prize_var.get()
-        if prize_label:
-            current_id = prize_label.split(" - ")[0]
-            current_prize = next((p for p in self.prizes if p.prize_id == current_id), None)
-            if current_prize:
-                remaining = remaining_slots(current_prize, self.lottery_state)
-                if remaining > 0:
-                    self.phase = "wait_for_manual"
-                    self.result_var.set(f"当前奖项剩余 {remaining} 个，请蓄力继续")
-                    self._update_btn_state()
-                return
-
-        # 2. 当前抽完了，找下一个
-        next_prize = None
-        start_index = -1
-        if prize_label:
-            current_id = prize_label.split(" - ")[0]
-            start_index = next((i for i, prize in enumerate(self.prizes) if prize.prize_id == current_id), -1)
-        for prize in self.prizes[start_index + 1:]:
-            if remaining_slots(prize, self.lottery_state) > 0:
-                next_prize = prize
-                break
-
-        options = self.prize_combo["values"]
-        next_option = None
-        if next_prize:
-            next_option = next((opt for opt in options if opt.startswith(f"{next_prize.prize_id} - ")), None)
-        
-        if next_option:
-            self.prize_var.set(next_option)
-            self._prepare_wheel() # 重置转盘为新奖项
-            
-            # --- v21 修改：切换后不自动开始 ---
-            self.phase = "wait_for_manual" 
-            
-            new_prize_name = next_option.split(" - ")[1].split(" (")[0]
-            self.result_var.set(f"已切换至：{new_prize_name}，请蓄力开始！")
-            self._update_btn_state()
-            # -------------------------------
-        else:
-            self._render_grand_summary()
 
     def _render_grand_summary(self):
         self.phase = "summary"
@@ -720,6 +655,48 @@ class WheelLotteryWindow(tk.Toplevel):
 
         self._start_summary_scroll(max(column_heights), height)
 
+    def _render_prize_summary(self, prize) -> None:
+        self.canvas.delete("all")
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        self.canvas.create_rectangle(0, 0, width, height, fill="#110517", outline="")
+
+        title_text = f"🎉 {prize.name} 中奖结果"
+        self.canvas.create_text(width / 2, 90, text=title_text, font=("Microsoft YaHei UI", 32, "bold"), fill=self.colors["gold"])
+
+        winners = [
+            winner for winner in self.lottery_state.get("winners", [])
+            if winner.get("prize_id") == prize.prize_id
+        ]
+        names = [winner.get("person_name", "未知") for winner in winners]
+        if not names:
+            self.canvas.create_text(width / 2, height / 2, text="暂无中奖者", font=("Microsoft YaHei UI", 22, "bold"), fill="white")
+            return
+
+        total = len(names)
+        columns = 3 if total > 20 else 2 if total > 10 else 1
+        column_width = width / columns
+        column_positions = [column_width * (i + 0.5) for i in range(columns)]
+        rows = math.ceil(total / columns)
+        font_size = 20 if total <= 10 else 18 if total <= 24 else 16
+
+        start_y = 160
+        for col in range(columns):
+            start_index = col * rows
+            end_index = min(start_index + rows, total)
+            if start_index >= total:
+                break
+            column_text = "\n".join(names[start_index:end_index])
+            self.canvas.create_text(
+                column_positions[col],
+                start_y,
+                text=column_text,
+                font=("Microsoft YaHei UI", font_size, "bold"),
+                fill="white",
+                anchor="n",
+                justify=tk.LEFT,
+            )
+
     def _start_summary_scroll(self, content_height: float, canvas_height: float) -> None:
         if self.summary_scroll_after_id:
             self.after_cancel(self.summary_scroll_after_id)
@@ -777,6 +754,15 @@ class WheelLotteryWindow(tk.Toplevel):
         speak_text = f"恭喜 {parts[-1]} 获得 {prize_label}"
         self._speak_winner(speak_text)
         self._refresh_history_list() 
+
+        if not self.target_queue and self._is_current_prize_complete():
+            self.phase = "prize_summary"
+            self.result_var.set("本奖项已完成，查看结果或进入下一轮")
+            current_prize = self._get_current_prize()
+            if current_prize:
+                self._render_prize_summary(current_prize)
+            self._update_btn_state()
+            return
 
         if self.is_auto_playing:
             self.phase = "auto_wait"
@@ -849,7 +835,7 @@ class WheelLotteryWindow(tk.Toplevel):
             self.history_listbox.insert(tk.END, f"🎗 {prize} - {name}")
 
     def _handle_prize_change(self, event: tk.Event) -> None:
-        if self.phase in ["idle", "finished", "wait_for_manual"]:
+        if self.phase in ["idle", "finished", "wait_for_manual", "prize_summary"]:
              self.target_queue = [] 
              self._prepare_wheel()
 
@@ -872,7 +858,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self.canvas.create_text(x, y, text=text, font=font, fill=text_color, tags=tags, justify=justify)
 
     def _render_wheel(self, display_energy=0.0) -> None:
-        if self.phase == "summary": return 
+        if self.phase in ["summary", "prize_summary"]: return 
 
         self.canvas.delete("all")
         width = self.canvas.winfo_width()
@@ -977,3 +963,80 @@ class WheelLotteryWindow(tk.Toplevel):
                 self.canvas.create_text(bar_x - 15, fill_top_y, text=self.encouragement_text, fill="white", font=("Microsoft YaHei UI", 16, "bold"), anchor="e")
             
             self.canvas.create_text(bar_x + bar_w/2, bar_bottom_y + 25, text="动能", fill="#888", font=("Microsoft YaHei UI", 9))
+
+    def _get_current_prize(self):
+        label = self.prize_var.get()
+        if not label:
+            return None
+        prize_id = label.split(" - ", 1)[0]
+        return next((prize for prize in self.prizes if prize.prize_id == prize_id), None)
+
+    def _has_next_prize(self) -> bool:
+        return self._next_available_prize() is not None
+
+    def _next_available_prize(self):
+        current_prize = self._get_current_prize()
+        start_index = -1
+        if current_prize:
+            start_index = next((i for i, prize in enumerate(self.prizes) if prize.prize_id == current_prize.prize_id), -1)
+        for prize in self.prizes[start_index + 1:]:
+            if remaining_slots(prize, self.lottery_state) > 0:
+                return prize
+        return None
+
+    def _go_next_prize(self) -> None:
+        next_prize = self._next_available_prize()
+        if not next_prize:
+            self._render_grand_summary()
+            return
+        options = self.prize_combo["values"]
+        next_option = next((opt for opt in options if opt.startswith(f"{next_prize.prize_id} - ")), None)
+        if next_option:
+            self.prize_var.set(next_option)
+            self._prepare_wheel()
+            self.phase = "wait_for_manual"
+            self.result_var.set(f"已切换至：{next_prize.name}，请蓄力开始！")
+            self._update_btn_state()
+
+    def _is_current_prize_complete(self) -> bool:
+        current_prize = self._get_current_prize()
+        if not current_prize:
+            return False
+        return remaining_slots(current_prize, self.lottery_state) <= 0
+
+    def _show_prize_summary_if_complete(self) -> None:
+        current_prize = self._get_current_prize()
+        if not current_prize:
+            return
+        remaining = remaining_slots(current_prize, self.lottery_state)
+        if remaining > 0:
+            self.phase = "wait_for_manual"
+            self.result_var.set(f"当前奖项剩余 {remaining} 个，请蓄力继续")
+            self._update_btn_state()
+            return
+        self.phase = "prize_summary"
+        self.result_var.set("本奖项已完成，查看结果或进入下一轮")
+        self._render_prize_summary(current_prize)
+        self._update_btn_state()
+
+    def _update_btn_state(self):
+        if self.phase == "prize_summary":
+            if self._has_next_prize():
+                self.action_btn.config(text="下一轮", bg=self.colors["cyan"], fg="#000")
+            else:
+                self.action_btn.config(text="展示所有中奖者", bg=self.colors["cyan"], fg="#000")
+            self.prize_combo.config(state="readonly")
+        elif self.phase in ["charging", "spinning", "braking", "auto_wait"]:
+            self.action_btn.config(text="STOP (点击暂停)", bg=self.colors["red"], fg="white")
+            self.prize_combo.config(state="disabled") 
+        elif self.phase == "wait_for_manual":
+             self.action_btn.config(text="继续 (长按蓄力)", bg="#666", fg="#FFF")
+             self.prize_combo.config(state="readonly") 
+        else:
+            self.action_btn.config(text="按住蓄力 / 点击开始", bg=self.colors["gold"], fg="black")
+            self.prize_combo.config(state="readonly")
+
+        if self.phase in ["idle", "wait_for_manual", "prize_summary"]:
+            self.reset_btn.pack(fill=tk.X, pady=0, before=self.action_btn)
+        else:
+            self.reset_btn.pack_forget()
