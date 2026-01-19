@@ -100,7 +100,6 @@ class WheelLotteryWindow(tk.Toplevel):
         self.spin_start_time = 0.0  
         self.spin_duration = 0.0    
         self.brake_duration = 0.0   
-        self.spin_total_time = 0.0  # 【6】线性动能衰减时间基准
         
         self.target_rotation = 0.0
         self.decel_factor = 0.04    
@@ -117,7 +116,6 @@ class WheelLotteryWindow(tk.Toplevel):
         self.tts_done_event = threading.Event()
         self.tts_lock = threading.Lock()
         self.tts_done_event.set()
-        self.active_target_id: str | None = None
         self.pending_removal_data: dict[str, Any] | None = None
         self.pending_removal_idx = -1
         self.removal_particles: list[dict[str, Any]] = []
@@ -145,14 +143,8 @@ class WheelLotteryWindow(tk.Toplevel):
         
         self._build_ui()
         self._bind_controls()
-        self._refresh_history_list()
-        # 【1】无奖项/全部抽完直接进入总榜（不进入转盘准备流程）
-        if (not self.prizes) or self._all_prizes_complete():
-            self.phase = "summary"
-            self._render_grand_summary()
-            self._update_btn_state()
-        else:
-            self._refresh_prize_options(hide_completed=True)
+        self._refresh_prize_options(hide_completed=True)
+        self._refresh_history_list() 
         self._animate()
         self._start_auto_scroll() 
 
@@ -244,17 +236,7 @@ class WheelLotteryWindow(tk.Toplevel):
         # ================= 中间画布 =================
         self.canvas = tk.Canvas(main_container, bg=self.colors["bg_canvas"], highlightthickness=0)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.canvas.bind("<Configure>", self._handle_canvas_resize)
-
-    def _handle_canvas_resize(self, _event=None) -> None:
-        if self.phase == "summary":
-            self._render_grand_summary()
-        elif self.phase == "prize_summary":
-            current_prize = self._get_current_prize()
-            if current_prize:
-                self._render_prize_summary(current_prize)
-        else:
-            self._render_wheel()
+        self.canvas.bind("<Configure>", lambda e: self._render_wheel())
 
     def _edit_title(self, event):
         new_title = simpledialog.askstring("设置", "修改大屏标题：", initialvalue=self.title_text_var.get(), parent=self)
@@ -418,7 +400,6 @@ class WheelLotteryWindow(tk.Toplevel):
 
     def _init_time_physics(self, power):
         self.spin_duration = 2.0 + (13.0 * power)
-        self.spin_total_time = self.spin_duration  # 【6】线性动能显示
         self.spin_start_time = time.monotonic()
         
         base_brake = 5.0 + (5.0 * power)
@@ -465,27 +446,15 @@ class WheelLotteryWindow(tk.Toplevel):
             already_won_ids = {str(winner["person_id"]) for winner in self.lottery_state.get("winners", [])}
             clean_excluded_ids |= already_won_ids
 
-        preview_state = copy.deepcopy(self.lottery_state)
-        remaining = remaining_slots(prize, preview_state)
+        remaining = remaining_slots(prize, self.lottery_state)
         if remaining <= 0:
-            self.result_var.set("该奖项名额为0，请切换奖项")
-            self._update_btn_state()
             return
-        winners_list: list[dict[str, Any]] = []
-        # 【2】一次蓄力抽完当前奖项剩余名额（逐个写入 preview_state）
-        for _ in range(remaining):
-            winners = draw_prize(prize, self.people, preview_state, self.global_must_win, clean_excluded_ids)
-            if not winners:
-                break
-            winner = winners[0]
-            winners_list.append(winner)
-            prize_state = preview_state.setdefault("prizes", {}).setdefault(winner["prize_id"], {"winners": []})
-            winner_id = str(winner["person_id"])
-            if winner_id not in {str(pid) for pid in prize_state["winners"]}:
-                prize_state["winners"].append(winner_id)
-            preview_state.setdefault("winners", []).append(winner)
 
-        if not winners_list:
+        preview_state = copy.deepcopy(self.lottery_state)
+        # Bug2: 一次性抽完当前奖项剩余名额，进入自动连抽队列
+        winners = draw_prize(prize, self.people, preview_state, self.global_must_win, clean_excluded_ids)
+
+        if not winners:
             self.phase = "idle"
             messagebox.showinfo("结果", "未能抽出中奖者。")
             return
@@ -493,7 +462,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self.pending_winners = [] 
         self.target_queue = []
 
-        for winner in winners_list:
+        for winner in winners:
             target_id = str(winner["person_id"])
             target_idx = next((item["index"] for item in self.wheel_names if str(item["id"]) == str(target_id)), -1)
             if target_idx != -1:
@@ -602,35 +571,25 @@ class WheelLotteryWindow(tk.Toplevel):
         elif self.phase == "spinning":
             elapsed = current_time - self.spin_start_time
             if elapsed < self.spin_duration:
-                total_time = max(0.1, self.spin_total_time)
-                progress = min(1.0, elapsed / total_time)
-                # 【6】动能显示线性消耗
-                display_energy = max(0.0, 1.0 - progress)
-                v_min = 6.0
-                v_max = 20.0 + 45.0 * self.locked_charge
-                self.current_speed = v_min + (v_max - v_min) * display_energy
+                progress = elapsed / self.spin_duration
+                display_energy = self.locked_charge * (1.0 - progress)
+                self.current_speed = 30.0 + math.sin(current_time * 5) * 0.5
                 self.wheel_rotation += self.current_speed
-                if display_energy <= 0.0:
-                    self.phase = "braking"
-                    self.active_target_id = self.target_queue[0] if self.target_queue else None
-                    self._calculate_stop_path_by_time()
             else:
                 self.phase = "braking"
-                self.active_target_id = self.target_queue[0] if self.target_queue else None
                 self._calculate_stop_path_by_time() 
 
         elif self.phase == "braking":
             display_energy = 0
-            # 【6】单调减速 + 平滑对齐
-            dist_remaining = max(0.0, self.target_rotation - self.wheel_rotation)
-            a = 0.35 + 1.2 * self.locked_charge
-            v_limit = math.sqrt(2 * a * dist_remaining) if dist_remaining > 0 else 0.0
-            self.current_speed = min(self.current_speed, v_limit)
-            self.current_speed = max(0.0, self.current_speed - a)
-            self.wheel_rotation += self.current_speed
-
-            if (self.target_rotation - self.wheel_rotation) <= 0.2 or self.current_speed == 0:
-                self.wheel_rotation = self.target_rotation 
+            dist_remaining = self.target_rotation - self.wheel_rotation
+        
+            # 使用平滑减速公式，防止突然跳变
+            if dist_remaining > 0.5:
+                step = dist_remaining * 0.08 # 减速系数
+                self.current_speed = max(0.2, step)
+                self.wheel_rotation += self.current_speed
+            else:
+                self.wheel_rotation = self.target_rotation # 精准落点
                 self._handle_stop()
         
         elif self.phase == "announcing":
@@ -672,29 +631,28 @@ class WheelLotteryWindow(tk.Toplevel):
         self.draw_after_id = self.after(20, self._animate)
     
     def _calculate_stop_path_by_time(self):
-        # 【6】锁定目标，确保停止计算准确且不跳动
-        target_id = self.active_target_id or (self.target_queue[0] if self.target_queue else None)
-        if not target_id:
-            return
+        if not self.target_queue: return
+        target_id = self.target_queue[0]
         item = next((entry for entry in self.wheel_names if str(entry["id"]) == str(target_id)), None)
         if not item:
-            if self.target_queue and self.target_queue[0] == target_id:
-                self.target_queue.pop(0)
-            self.active_target_id = None
-            if self.target_queue:
-                self.active_target_id = self.target_queue[0]
-                self._calculate_stop_path_by_time()
+            self._prepare_wheel()
+            item = next((entry for entry in self.wheel_names if str(entry["id"]) == str(target_id)), None)
+        if not item:
+            self.target_queue.pop(0)
             return
-
-        current_rotation = self.wheel_rotation
-        current_mod = current_rotation % 360
-        mid_angle = (item["angle_center"] + current_mod) % 360
-        d = abs(mid_angle - 90) % 360
-        _dist_to_90 = min(d, 360 - d)
-        needed_delta = (90 - mid_angle) % 360
-
-        extra_spins = 360 * (2 + int(self.locked_charge * 3))
-        self.target_rotation = current_rotation + needed_delta + extra_spins
+        target_center_angle = item["angle_center"]
+        
+        desired_mod = (90 - target_center_angle) % 360
+        current_abs = self.wheel_rotation
+        current_mod = current_abs % 360
+        rotation_needed = (desired_mod - current_mod) % 360
+        
+        avg_speed = 10.0 
+        estimated_dist = avg_speed * (self.brake_duration * 50) 
+        
+        extra_spins = math.ceil(estimated_dist / 360) * 360
+        
+        self.target_rotation = current_abs + rotation_needed + extra_spins
         self.decel_factor = 0.04 
 
     def _format_names_rows(self, names: list[str], per_row: int = 4) -> str:
@@ -706,27 +664,17 @@ class WheelLotteryWindow(tk.Toplevel):
         return "\n".join(rows)
 
     def _render_grand_summary(self):
-        # 【1】总榜自适应布局 + 自动滚动
-        # 【7】固定三列瀑布流布局，自动平衡高度
         self.phase = "summary"
         self.result_var.set("🎉 所有奖项抽取完毕！")
         self.canvas.delete("all")
         
-        width = max(1, self.canvas.winfo_width())
-        height = max(1, self.canvas.winfo_height())
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
         self.canvas.create_rectangle(0, 0, width, height, fill=self.colors["bg_canvas"], outline="")
         
-        base_scale = max(0.5, min(width / 1440, height / 900))
-        title_font_size = max(24, int(36 * base_scale))
-        header_font_size = max(14, int(18 * base_scale))
-        names_font_size = max(12, int(14 * base_scale))
-        top_margin = max(60, int(100 * base_scale))
-        y_start = top_margin + int(title_font_size * 1.4)
-        self.summary_scroll_margin = y_start + int(names_font_size * 1.6)
-        self.summary_scroll_speed = max(0.4, 0.6 * base_scale)
+        self.canvas.create_text(width/2, 100, text="🏆 中奖总榜 🏆", font=("Microsoft YaHei UI", 36, "bold"), fill=self.colors["gold"])
 
-        self.canvas.create_text(width/2, top_margin, text="🏆 中奖总榜 🏆", font=("Microsoft YaHei UI", title_font_size, "bold"), fill=self.colors["gold"])
-
+        y_start = 180
         winners = self.lottery_state.get("winners", [])
         
         grouped = {}
@@ -746,45 +694,34 @@ class WheelLotteryWindow(tk.Toplevel):
                 ordered_prizes.append((prize_name, names))
                 seen_prize_names.add(prize_name)
 
-        if not ordered_prizes:
-            self.canvas.create_text(
-                width / 2,
-                height / 2,
-                text="暂无中奖者",
-                font=("Microsoft YaHei UI", max(18, int(22 * base_scale)), "bold"),
-                fill=self.colors["text_muted"],
-            )
-            return
-
         columns = 3
         column_width = width / columns
         column_positions = [column_width * (i + 0.5) for i in range(columns)]
         column_heights = [y_start] * columns
 
-        header_height = int(header_font_size * 1.6)
-        line_height = int(names_font_size * 1.4)
-        block_gap = int(names_font_size * 1.2)
-        per_row = 4 if width >= 1200 else 3 if width >= 900 else 2
+        header_height = 28
+        line_height = 20
+        block_gap = 26
 
-        for prize_name, names in ordered_prizes:
-            col = column_heights.index(min(column_heights))
+        for idx, (prize_name, names) in enumerate(ordered_prizes):
+            col = idx % columns
             x = column_positions[col]
             y = column_heights[col]
             self.canvas.create_text(
                 x,
                 y,
                 text=f"✨ {prize_name}",
-                font=("Microsoft YaHei UI", header_font_size, "bold"),
+                font=("Microsoft YaHei UI", 18, "bold"),
                 fill=self.colors["gold_deep"],
                 anchor="n",
                 tags="summary_items",
             )
-            names_text = self._format_names_rows(names, per_row=per_row) if names else "暂无"
+            names_text = self._format_names_rows(names) if names else "暂无"
             self.canvas.create_text(
                 x,
                 y + header_height,
                 text=names_text,
-                font=("Microsoft YaHei UI", names_font_size),
+                font=("Microsoft YaHei UI", 14),
                 fill=self.colors["white"],
                 anchor="n",
                 tags="summary_items",
@@ -859,9 +796,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self.summary_scroll_after_id = self.after(40, _tick)
 
     def _speak_winner(self, department: str, person_id: str, name: str, prize_label: str) -> None:
-        # 【4】语音播报稳定 + 兜底体验
         if not TTS_AVAILABLE:
-            self._notify_tts_unavailable("pyttsx3 not available")
             self.tts_playing = False
             self.tts_done_event.set()
             return
@@ -889,14 +824,13 @@ class WheelLotteryWindow(tk.Toplevel):
                         engine.setProperty('voice', selected_voice)
                     
                     # 慢速清晰播报：恭喜 + 工号 + 姓名 + 奖项
-                    engine.setProperty('rate', 140)
+                    engine.setProperty('rate', 130)
                     spaced_id = " ".join(str(person_id))
                     full_sentence = f"恭喜，{spaced_id}，，{name}，，获得，{prize_label}"
                     engine.say(full_sentence)
                     engine.runAndWait()
             except Exception as e:
                 print("TTS error:", e)
-                self._notify_tts_unavailable(e)
             finally:
                 if engine:
                     engine.stop()
@@ -905,22 +839,9 @@ class WheelLotteryWindow(tk.Toplevel):
 
         threading.Thread(target=_speak, daemon=True).start()
 
-    def _notify_tts_unavailable(self, _error: Exception | str | None = None) -> None:
-        def _update_ui():
-            self.result_var.set("语音播报不可用：已切换静默模式")
-            try:
-                self.root.bell()
-            except Exception:
-                pass
-        self.root.after(0, _update_ui)
-
     def _handle_stop(self):
-        if not self.target_queue:
-            return
-        winner_id = str(self.active_target_id or self.target_queue[0])
-        if self.target_queue and self.target_queue[0] == winner_id:
-            self.target_queue.pop(0)
-        self.active_target_id = None
+        if not self.target_queue: return
+        winner_id = str(self.target_queue.pop(0))
         winner_data = next((entry for entry in self.wheel_names if str(entry["id"]) == winner_id), None)
         if not winner_data:
             return
@@ -934,7 +855,6 @@ class WheelLotteryWindow(tk.Toplevel):
             self._apply_winner_to_state(winner_entry)
             if self.on_transfer:
                 self.on_transfer(self.lottery_state, [winner_entry])
-            self._refresh_prize_options(hide_completed=False)
         
         # 获取纯净奖项名称用于播报
         try:
@@ -943,7 +863,7 @@ class WheelLotteryWindow(tk.Toplevel):
         except:
             prize_label = "奖品"
 
-        # 【3】先播报，再移除
+        # Bug3: 先播报，播报结束后再进入 removing 动画
         self._speak_winner("", winner_data.get("id", ""), winner_data.get("name", ""), prize_label)
         self.pending_removal_data = winner_data
         self.pending_removal_idx = winner_data.get("index", -1)
@@ -1094,8 +1014,7 @@ class WheelLotteryWindow(tk.Toplevel):
         elif total_names >= 100: base_font_size = 10
         elif total_names >= 80: base_font_size = 12
         else: base_font_size = 14
-        min_font_size = 8
-
+        
         rotation_mod = self.wheel_rotation % 360
         pointer_text_top = ""
 
@@ -1120,48 +1039,31 @@ class WheelLotteryWindow(tk.Toplevel):
                 )
             
             mid_angle = (item["angle_center"] + rotation_mod) % 360
-            dist_to_90 = min(abs(mid_angle - 90), 360 - abs(mid_angle - 90))
+            dist_to_90 = abs(mid_angle - 90)
             if dist_to_90 < self.segment_angle / 2:
                 pointer_text_top = item["full_text"]
 
             if show_small_text:
-                # 【5】扇区文字仅显示姓名，减少排列与对齐，保持方向固定
-                name_text = item["name"] or ""
-                display_name = name_text
-                font_size = base_font_size
-                if len(display_name) > 8:
-                    display_name = display_name[:7] + "…"
-                    font_size = max(min_font_size, base_font_size - 2)
-                elif len(display_name) > 6:
-                    font_size = max(min_font_size, base_font_size - 1)
-
                 mid_angle_rad = math.radians(mid_angle)
-                text_radius = radius * 0.68
+                text_radius = radius * 0.8
                 tx = cx + text_radius * math.cos(mid_angle_rad)
                 ty = cy - text_radius * math.sin(mid_angle_rad)
-                if total_names > 120:
-                    self.canvas.create_text(
-                        tx,
-                        ty,
-                        text=display_name,
-                        font=("Microsoft YaHei UI", font_size, "bold"),
-                        fill=self.colors["white"],
-                        justify=tk.CENTER,
-                        angle=0,
-                    )
-                else:
-                    self._draw_text_with_outline(
-                        tx,
-                        ty,
-                        display_name,
-                        ("Microsoft YaHei UI", font_size, "bold"),
-                        text_color=self.colors["white"],
-                        outline_color=self.colors["red_deep"],
-                        thickness=2,
-                        tags=None,
-                        justify=tk.CENTER,
-                        angle=0,
-                    )
+                display_on_wheel = item["name"]
+                if total_names < 50: display_on_wheel = f"{item['name']}"
+                text_angle = mid_angle
+                if 90 < mid_angle < 270: text_angle += 180
+                self._draw_text_with_outline(
+                    tx,
+                    ty,
+                    display_on_wheel,
+                    ("Microsoft YaHei UI", base_font_size, "bold"),
+                    text_color=self.colors["white"],
+                    outline_color=self.colors["red_deep"],
+                    thickness=2,
+                    tags=None,
+                    justify=tk.CENTER,
+                    angle=text_angle,
+                )
 
         self.canvas.create_oval(cx - 70, cy - 70, cx + 70, cy + 70, fill=self.colors["white"], outline=self.colors["gold"], width=4)
         
@@ -1250,7 +1152,6 @@ class WheelLotteryWindow(tk.Toplevel):
         next_prize = self._next_available_prize()
         if not next_prize:
             self._render_grand_summary()
-            self._update_btn_state()
             return
         options = self.prize_combo["values"]
         next_option = next((opt for opt in options if opt.startswith(f"{next_prize.prize_id} - ")), None)
@@ -1327,10 +1228,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self._prepare_wheel() # 重新准备画布（显示空或就绪）
 
     def _update_btn_state(self):
-        if self.phase == "summary":
-            self.action_btn.config(text="已完成抽奖", bg=self.colors["panel_border"], fg=self.colors["white"], state="disabled")
-            self.prize_combo.config(state="disabled")
-        elif self.phase == "prize_summary":
+        if self.phase == "prize_summary":
             if self._has_next_prize():
                 self.action_btn.config(text="确认并继续", bg=self.colors["gold"], fg="#5C1010", state="normal")
             else:
@@ -1378,8 +1276,7 @@ class WheelLotteryWindow(tk.Toplevel):
             self._complete_post_removal_phase()
             return
         current_prize = self._get_current_prize()
-        allow_repeat = bool(current_prize and (getattr(current_prize, "allow_repeat", False) or not current_prize.exclude_previous_winners))
-        should_remove = bool(current_prize and not allow_repeat)
+        should_remove = bool(current_prize and current_prize.exclude_previous_winners)
         if should_remove:
             self.removing_idx = self.pending_removal_idx
             self.removal_scale = 1.0
