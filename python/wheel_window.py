@@ -77,7 +77,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self.configure(bg=self.colors["panel_bg"])
 
         # 变量
-        self.title_text_var = tk.StringVar(value="✨ 2025 LFAF尾牙 ✨")
+        self.title_text_var = tk.StringVar(value="✨ 2025 年度盛典 ✨")
         self.prize_var = tk.StringVar()
         self.result_var = tk.StringVar(value="等待蓄力...")
         
@@ -116,6 +116,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self.pending_removal_data: dict[str, Any] | None = None
         self.pending_removal_idx = -1
         self.removal_particles: list[dict[str, Any]] = []
+        self.pending_removal_data: dict[str, Any] | None = None
         
         # 视觉特效
         self.bg_particles = [] 
@@ -180,7 +181,7 @@ class WheelLotteryWindow(tk.Toplevel):
             font=("Microsoft YaHei UI", 12), 
             highlightthickness=0, 
             borderwidth=0,
-            activestyle="none"
+            activestyle="none",
         )
         self.history_listbox.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
 
@@ -347,6 +348,8 @@ class WheelLotteryWindow(tk.Toplevel):
         if self.tts_playing:
             return
         if self.phase == "summary":
+            return
+        if self.phase == "announce":
             return
         if self.phase == "removing":
             return
@@ -599,12 +602,21 @@ class WheelLotteryWindow(tk.Toplevel):
                     self.result_var.set("自动连抽中...")
                     self._update_btn_state()
                 else:
-                    self._show_prize_summary_if_complete()
+                    if self._ensure_auto_queue():
+                        self.phase = "spinning"
+                        self._init_time_physics(self.locked_charge)
+                        self.result_var.set("自动连抽中...")
+                        self._update_btn_state()
+                    else:
+                        self._show_prize_summary_if_complete()
         elif self.phase == "removing":
             self.removal_scale -= 0.08
             if self.removal_scale <= 0:
                 self._finalize_removal()
             self._animate_removal_particles()
+        elif self.phase == "announce":
+            if not self.tts_playing:
+                self._start_removal_from_pending()
         else:
             self._animate_removal_particles()
 
@@ -841,11 +853,13 @@ class WheelLotteryWindow(tk.Toplevel):
         self.pending_removal_data = winner_data
         self.pending_removal_idx = winner_data.get("index", -1)
 
-        # 核心修复：如果是最后一个人，先进入 removing 状态，等 finalize_removal 再处理结算
-        if not self.target_queue and self._is_current_prize_complete():
-            self.post_removal_phase = "prize_summary"
-        elif self.target_queue: # 还有人在队列里，继续连抽
-            self.post_removal_phase = "auto_wait"
+        remaining = 0
+        current_prize = self._get_current_prize()
+        if current_prize:
+            remaining = remaining_slots(current_prize, self.lottery_state)
+
+        if remaining <= 0 and not self.target_queue:
+            post_removal_phase = "prize_summary"
         else:
             self.post_removal_phase = "idle"
             
@@ -1132,6 +1146,29 @@ class WheelLotteryWindow(tk.Toplevel):
         self._render_prize_summary(current_prize)
         self._update_btn_state()
 
+    def _ensure_auto_queue(self) -> bool:
+        current_prize = self._get_current_prize()
+        if not current_prize:
+            return False
+        if remaining_slots(current_prize, self.lottery_state) <= 0:
+            return False
+        self._start_draw_logic()
+        return bool(self.target_queue)
+
+    def _start_removal_from_pending(self) -> None:
+        if not self.pending_removal_data:
+            self.phase = "idle"
+            self._update_btn_state()
+            return
+        winner_data = self.pending_removal_data["winner_data"]
+        self.removing_idx = winner_data.get("index", -1)
+        self.removal_scale = 1.0
+        self._spawn_removal_particles(winner_data)
+        self.post_removal_phase = self.pending_removal_data["post_removal_phase"]
+        self.pending_removal_data = None
+        self.phase = "removing"
+        self._update_btn_state()
+
     def _confirm_prize_result(self) -> None:
         """点击确认结算：仅关闭统计画面，不自动跳转下一奖项"""
         # Bug1: 若所有奖项名额都抽完，确认后直接进入总榜
@@ -1141,9 +1178,13 @@ class WheelLotteryWindow(tk.Toplevel):
             self._update_btn_state()
             return
         self.is_showing_prize_result = False
-        self.phase = "idle" 
-        # 此时才根据需要刷新一次列表，把刚才抽完的奖项标记为 0 
-        self._refresh_prize_options(hide_completed=False) 
+        # 此时才根据需要刷新一次列表，把刚才抽完的奖项标记为 0
+        self._refresh_prize_options(hide_completed=False)
+        if not self._has_next_prize():
+            self._render_grand_summary()
+            self._update_btn_state()
+            return
+        self.phase = "idle"
         self.result_var.set("当前奖项已结束，请手动切换下一奖项")
         self._prepare_wheel() # 重新准备画布（显示空或就绪）
 
