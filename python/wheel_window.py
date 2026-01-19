@@ -77,7 +77,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self.configure(bg=self.colors["panel_bg"])
 
         # 变量
-        self.title_text_var = tk.StringVar(value="✨ 2025 年度盛典 ✨")
+        self.title_text_var = tk.StringVar(value="✨ 2025 LFAF尾牙 ✨")
         self.prize_var = tk.StringVar()
         self.result_var = tk.StringVar(value="等待蓄力...")
         
