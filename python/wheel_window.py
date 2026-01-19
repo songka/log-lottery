@@ -648,9 +648,10 @@ class WheelLotteryWindow(tk.Toplevel):
                     # 震荡物理(overshoot+oscillating)：进入二阶阻尼振荡
                     self.brake_phase = "oscillating"
                     self.osc_start_time = current_time
-                    self.osc_A = self.overshoot_angle
-                    self.osc_omega = random.uniform(10.0, 18.0)
-                    self.osc_zeta = random.uniform(0.18, 0.35)
+                    # 震荡物理(二阶阻尼)：重型机械质感，降低频率并提高阻尼
+                    self.osc_A = self.overshoot_angle * 0.85
+                    self.osc_omega = random.uniform(8.0, 12.0)
+                    self.osc_zeta = random.uniform(0.35, 0.5)
             else:
                 t = current_time - self.osc_start_time
                 if t < 0:
@@ -1163,7 +1164,6 @@ class WheelLotteryWindow(tk.Toplevel):
             return
 
         total_names = len(self.wheel_names)
-        show_small_text = total_names <= 200
         
         if total_names >= 160: base_font_size = 6
         elif total_names >= 120: base_font_size = 8
@@ -1175,16 +1175,15 @@ class WheelLotteryWindow(tk.Toplevel):
         rotation_rad = math.radians(rotation_mod)
         pointer_text_top = ""
         speed = abs(self.current_speed)
-        if speed > self.text_speed_off:
+        if self.phase == "braking":
+            text_mode = "full"
+        elif speed > self.text_speed_off:
             text_mode = "off"
         elif speed > self.text_speed_simple:
             text_mode = "simple"
         else:
             text_mode = "full"
-        text_rendered = 0
-        text_window = self.text_focus_angle
-        text_limit = self.max_text_items
-        should_update_text = force_full or text_mode != self.text_render_mode or (now - self.last_text_render_time) >= self.text_update_interval
+        should_update_text = text_mode != "off"
         if text_mode == "off":
             if self.text_render_mode != "off":
                 self.canvas.delete("text")
@@ -1220,8 +1219,8 @@ class WheelLotteryWindow(tk.Toplevel):
             if dist_to_pointer < self.segment_angle / 2:
                 pointer_text_top = item["full_text"]
 
-            if should_update_text and text_mode != "off" and (show_small_text or text_mode == "full"):
-                if text_mode == "simple" and dist_to_pointer <= text_window and text_rendered < text_limit:
+            if should_update_text and text_mode != "off":
+                if text_mode == "simple":
                     mid_angle_rad = item["angle_center_rad"] + rotation_rad
                     text_radius = radius * 0.8
                     tx = cx + text_radius * math.cos(mid_angle_rad)
@@ -1240,7 +1239,6 @@ class WheelLotteryWindow(tk.Toplevel):
                         justify=tk.CENTER,
                         angle=text_angle,
                     )
-                    text_rendered += 1
                 elif text_mode == "full":
                     mid_angle_rad = item["angle_center_rad"] + rotation_rad
                     name_chars = item.get("name_chars", [item["name"]])
@@ -1278,7 +1276,6 @@ class WheelLotteryWindow(tk.Toplevel):
                                 justify=tk.CENTER,
                                 angle=text_angle,
                             )
-                    text_rendered += 1
 
         self.canvas.create_oval(
             cx - 70,
