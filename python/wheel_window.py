@@ -379,7 +379,7 @@ class WheelLotteryWindow(tk.Toplevel):
                 self._update_btn_state()
 
     def _init_time_physics(self, power):
-        self.spin_duration = 2.0 + (43.0 * power)
+        self.spin_duration = 2.0 + (13.0 * power)
         self.spin_start_time = time.monotonic()
         
         base_brake = 5.0 + (5.0 * power)
@@ -760,11 +760,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self.summary_scroll_after_id = self.after(40, _tick)
 
     def _speak_winner(self, department: str, person_id: str, name: str, prize_label: str) -> None:
-        if not TTS_AVAILABLE:
-            return
-        if not department and not person_id and not name:
-            return
-        if self.tts_playing:
+        if not TTS_AVAILABLE or self.tts_playing:
             return
         self.tts_playing = True
 
@@ -772,24 +768,29 @@ class WheelLotteryWindow(tk.Toplevel):
             try:
                 engine = pyttsx3.init()
                 voices = engine.getProperty('voices')
-                for voice in voices:
-                    voice_name = getattr(voice, "name", "")
-                    voice_id = getattr(voice, "id", "")
-                    if "HANHAN" in voice_name.upper() or "ZH" in voice_id.upper():
-                        engine.setProperty('voice', voice_id)
-                        break
-                engine.setProperty('rate', 170)
-                if department:
-                    engine.say(department)
-                    engine.runAndWait()
-                    time.sleep(1.5)
-                detail_text = " ".join(part for part in [person_id, name] if part)
-                if prize_label:
-                    detail_text = f"{detail_text} 获得 {prize_label}"
-                if detail_text.strip():
-                    engine.say(detail_text.strip())
-                    engine.runAndWait()
-            except Exception:
+                
+                # 语音优化：优先寻找更自然的中文女声
+                preferred_voices = ["YAOYAO", "HUIHUI", "XIAOXIAO", "ZH-CN"]
+                selected_voice = None
+                for pref in preferred_voices:
+                    for v in voices:
+                        if pref in v.name.upper() or pref in v.id.upper():
+                            selected_voice = v.id
+                            break
+                    if selected_voice: break
+                
+                if selected_voice:
+                    engine.setProperty('voice', selected_voice)
+                
+                engine.setProperty('rate', 180) # 语速稍快一点更干练
+                
+                # 构建完整的播报文本：恭喜 [姓名]，获得 [奖项名]
+                # 去掉部门和工号，大屏抽奖通常只报名字，仪式感最强
+                text = f"恭喜 ，{id}，{name}，获得 {prize_label}！"
+                
+                engine.say(text)
+                engine.runAndWait()
+            except:
                 pass
             finally:
                 self.tts_playing = False
@@ -813,29 +814,28 @@ class WheelLotteryWindow(tk.Toplevel):
             if self.on_transfer:
                 self.on_transfer(self.lottery_state, [winner_entry])
         
+        # 获取纯净奖项名称用于播报
         try:
-            prize_label = self.prize_var.get().split(" - ")[1].split(" (")[0]
-        except Exception:
+            prize_full = self.prize_var.get()
+            prize_label = prize_full.split(" - ")[1].split(" (")[0]
+        except:
             prize_label = "奖品"
-            
-        self.result_var.set(f"恭喜 {winner_data['name']} 获得 {prize_label}！")
-        
-        parts = info.split()
-        name = winner_data.get("name", "")
-        person_id = winner_data.get("id", "")
-        department = " ".join(parts[:-2]) if len(parts) >= 3 else ""
-        self._speak_winner(str(department), str(person_id), str(name), prize_label)
-        self._refresh_history_list() 
 
+        # 执行语音播报
+        self._speak_winner("", winner_data.get("id", ""), winner_data.get("name", ""), prize_label)
+        
         self.removing_idx = winner_data.get("index", -1)
         self.removal_scale = 1.0
         self._spawn_removal_particles(winner_data)
+
+        # 核心修复：如果是最后一个人，先进入 removing 状态，等 finalize_removal 再处理结算
         if not self.target_queue and self._is_current_prize_complete():
             self.post_removal_phase = "prize_summary"
-        elif self.is_auto_playing:
+        elif self.target_queue: # 还有人在队列里，继续连抽
             self.post_removal_phase = "auto_wait"
         else:
-            self.post_removal_phase = "wait_for_manual"
+            self.post_removal_phase = "idle"
+            
         self.phase = "removing"
         self._update_btn_state()
 
@@ -876,22 +876,29 @@ class WheelLotteryWindow(tk.Toplevel):
             self.prize_var.set(target_option)
             self._prepare_wheel()
 
-    def _refresh_prize_options(self, hide_completed: bool = True) -> None:
+    def _refresh_prize_options(self, hide_completed: bool = False) -> None:
+        """
+        刷新奖项下拉列表。
+        :param hide_completed: 是否强制隐藏剩余0的奖项（仅初始化和手动切换时为 True）
+        """
         options = []
+        current_val = self.prize_var.get()
+        current_id = current_val.split(" - ")[0] if current_val else None
+
         for prize in self.prizes:
             remaining = remaining_slots(prize, self.lottery_state)
-            if remaining > 0 or not hide_completed:
-                options.append(f"{prize.prize_id} - {prize.name} (剩余 {remaining})")
+            # 隐藏逻辑：只有在要求隐藏、名额为0，且【不是当前选中项】时才剔除
+            if hide_completed and remaining <= 0 and prize.prize_id != current_id:
+                continue
+            
+            options.append(f"{prize.prize_id} - {prize.name} (剩余 {remaining})")
             
         self.prize_combo["values"] = options
         
-        current = self.prize_var.get()
-        if options and (not current or current not in options):
-            if hide_completed:
-                self.prize_var.set(options[0])
-                self._prepare_wheel()
-        elif not options:
-            self.prize_var.set("") 
+        # 初始选择逻辑
+        if options and (not self.prize_var.get() or self.prize_var.get() not in options):
+            self.prize_var.set(options[0])
+            self._prepare_wheel()
 
     def _refresh_history_list(self) -> None:
         if not hasattr(self, "history_listbox"): return
@@ -1109,12 +1116,13 @@ class WheelLotteryWindow(tk.Toplevel):
         self._update_btn_state()
 
     def _confirm_prize_result(self) -> None:
+        """点击确认结算：仅关闭统计画面，不自动跳转下一奖项"""
         self.is_showing_prize_result = False
-        if self._has_next_prize():
-            self._refresh_prize_options(hide_completed=True)
-            self._go_next_prize()
-        else:
-            self._render_grand_summary()
+        self.phase = "idle" 
+        # 此时才根据需要刷新一次列表，把刚才抽完的奖项标记为 0 
+        self._refresh_prize_options(hide_completed=False) 
+        self.result_var.set("当前奖项已结束，请手动切换下一奖项")
+        self._prepare_wheel() # 重新准备画布（显示空或就绪）
 
     def _update_btn_state(self):
         if self.phase == "prize_summary":
