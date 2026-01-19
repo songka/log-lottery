@@ -102,6 +102,15 @@ class WheelLotteryWindow(tk.Toplevel):
         self.brake_duration = 0.0   
         
         self.target_rotation = 0.0
+        self.target_rotation_base = 0.0
+        self.overshoot_angle = 0.0
+        self.active_target_id: str | None = None
+        self.brake_phase = "braking"
+        self.osc_start_time = 0.0
+        self.osc_A = 0.0
+        self.osc_omega = 12.0
+        self.osc_zeta = 0.25
+        self.osc_min_duration = 0.6
         self.decel_factor = 0.04    
         
         # 队列
@@ -132,6 +141,25 @@ class WheelLotteryWindow(tk.Toplevel):
         self.auto_wait_duration = 2.0 
         self.draw_after_id: str | None = None
         self.anim_frame = 0 
+        self.render_after_id: str | None = None
+        self._pending_resize_render = False
+        self._last_resize_render_time = 0.0
+        self._last_resize_event = 0.0
+        self._resize_render_after_id: str | None = None
+        self.pending_display_energy = 0.0
+        self.render_interval_ms = 33
+        self.last_render_time = 0.0
+        self.last_bg_render_time = 0.0
+        self.last_text_render_time = 0.0
+        self.bg_update_interval = 0.12
+        self.text_update_interval = 0.12
+        self.text_render_mode = "off"
+        self.force_full_render = False
+        self.last_canvas_size = (0, 0)
+        self.text_focus_angle = 22.0
+        self.text_speed_off = 18.0
+        self.text_speed_simple = 8.0
+        self.max_text_items = 80
         
         # --- 滚动条相关 (v21优化) ---
         self.scroll_after_id = None
@@ -236,7 +264,8 @@ class WheelLotteryWindow(tk.Toplevel):
         # ================= 中间画布 =================
         self.canvas = tk.Canvas(main_container, bg=self.colors["bg_canvas"], highlightthickness=0)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.canvas.bind("<Configure>", lambda e: self._render_wheel())
+        # 性能优化(Throttling)：窗口变化时仅请求限频重绘
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
 
     def _edit_title(self, event):
         new_title = simpledialog.askstring("设置", "修改大屏标题：", initialvalue=self.title_text_var.get(), parent=self)
@@ -248,6 +277,21 @@ class WheelLotteryWindow(tk.Toplevel):
         self.bind("<KeyRelease-space>", self._on_key_up)
         self.bind("<F11>", self._toggle_fullscreen)
         self.focus_set()
+
+    def _on_canvas_configure(self, event) -> None:
+        """性能优化(Throttling)：窗口拖动/缩放时合并重绘请求。"""
+        self._last_resize_event = time.monotonic()
+        if self._pending_resize_render:
+            return
+        self._pending_resize_render = True
+
+        def _run():
+            self._pending_resize_render = False
+            self._last_resize_render_time = time.monotonic()
+            self._resize_render_after_id = None
+            self._request_render(force=True)
+
+        self._resize_render_after_id = self.after(33, _run)
 
     def _toggle_fullscreen(self, event=None):
         self.is_fullscreen = not self.is_fullscreen
@@ -264,6 +308,8 @@ class WheelLotteryWindow(tk.Toplevel):
 
     def _handle_close(self) -> None:
         if self.draw_after_id: self.after_cancel(self.draw_after_id)
+        if self.render_after_id: self.after_cancel(self.render_after_id)
+        if self._resize_render_after_id: self.after_cancel(self._resize_render_after_id)
         if self.scroll_after_id: self.after_cancel(self.scroll_after_id)
         if self.summary_scroll_after_id: self.after_cancel(self.summary_scroll_after_id)
         self.destroy()
@@ -406,7 +452,9 @@ class WheelLotteryWindow(tk.Toplevel):
         random_flux = random.uniform(-2.0, 2.0)
         self.brake_duration = max(3.0, base_brake + random_flux)
         
-        self.current_speed = 30.0 
+        self.current_speed = 30.0
+        self.brake_phase = "braking"
+        self.active_target_id = None
 
     def _on_key_down(self, event): self._on_input_down()
     def _on_key_up(self, event): self._on_input_up()
@@ -507,7 +555,7 @@ class WheelLotteryWindow(tk.Toplevel):
             self.wheel_names = []
             self.result_var.set("无候选人")
             self.winner_listbox.delete(0, tk.END)
-            self._render_wheel()
+            self._request_render(force=True)
             return
 
         random.shuffle(eligible)
@@ -520,13 +568,17 @@ class WheelLotteryWindow(tk.Toplevel):
         for i, person in enumerate(eligible):
             dept = getattr(person, 'department', '')
             full_text = f"{dept} {person.person_id} {person.name}".strip()
+            angle_center = i * self.segment_angle + self.segment_angle / 2
             self.wheel_names.append({
                 "index": i,
                 "id": str(person.person_id),
                 "name": person.name,
+                # 性能优化(缓存)：预计算字符列表与中心角弧度
+                "name_chars": list(person.name),
                 "full_text": full_text,
                 "color": random_colors[i % len(random_colors)],
-                "angle_center": i * self.segment_angle + self.segment_angle / 2
+                "angle_center": angle_center,
+                "angle_center_rad": math.radians(angle_center),
             })
 
         self.phase = "idle"
@@ -535,7 +587,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self.winner_listbox.delete(0, tk.END)
         self.revealed_winners = []
         self._update_btn_state()
-        self._render_wheel()
+        self._request_render(force=True)
 
     def _animate(self) -> None:
         """主循环"""
@@ -572,8 +624,11 @@ class WheelLotteryWindow(tk.Toplevel):
             elapsed = current_time - self.spin_start_time
             if elapsed < self.spin_duration:
                 progress = elapsed / self.spin_duration
-                display_energy = self.locked_charge * (1.0 - progress)
-                self.current_speed = 30.0 + math.sin(current_time * 5) * 0.5
+                display_energy = max(0.0, self.locked_charge * (1.0 - progress))
+                # 震荡物理(动能线性消耗)：速度随动能线性衰减
+                v_max = 28.0 + 8.0 * self.locked_charge
+                v_min = 6.0 + 4.0 * (1.0 - self.locked_charge)
+                self.current_speed = v_min + (v_max - v_min) * display_energy
                 self.wheel_rotation += self.current_speed
             else:
                 self.phase = "braking"
@@ -581,16 +636,35 @@ class WheelLotteryWindow(tk.Toplevel):
 
         elif self.phase == "braking":
             display_energy = 0
-            dist_remaining = self.target_rotation - self.wheel_rotation
-        
-            # 使用平滑减速公式，防止突然跳变
-            if dist_remaining > 0.5:
-                step = dist_remaining * 0.08 # 减速系数
-                self.current_speed = max(0.2, step)
-                self.wheel_rotation += self.current_speed
+            if self.brake_phase == "braking":
+                dist_remaining = self.target_rotation - self.wheel_rotation
+                # 使用平滑减速公式，防止突然跳变
+                if dist_remaining > 0.5:
+                    step = dist_remaining * 0.08 # 减速系数
+                    self.current_speed = max(0.2, step)
+                    self.wheel_rotation += self.current_speed
+                else:
+                    self.wheel_rotation = self.target_rotation
+                    # 震荡物理(overshoot+oscillating)：进入二阶阻尼振荡
+                    self.brake_phase = "oscillating"
+                    self.osc_start_time = current_time
+                    # 震荡物理(二阶阻尼)：重型机械质感，降低频率并提高阻尼
+                    self.osc_A = self.overshoot_angle * 0.85
+                    self.osc_omega = random.uniform(8.0, 12.0)
+                    self.osc_zeta = random.uniform(0.35, 0.5)
             else:
-                self.wheel_rotation = self.target_rotation # 精准落点
-                self._handle_stop()
+                t = current_time - self.osc_start_time
+                if t < 0:
+                    t = 0.0
+                # 震荡物理(二阶阻尼)：TargetBase + A * exp(-zeta*omega*t) * cos(omega_d*t)
+                omega_d = self.osc_omega * math.sqrt(max(0.0, 1.0 - self.osc_zeta ** 2))
+                decay = math.exp(-self.osc_zeta * self.osc_omega * t)
+                new_rotation = self.target_rotation_base + self.osc_A * decay * math.cos(omega_d * t)
+                self.current_speed = abs(new_rotation - self.wheel_rotation) / max(dt, 0.001)
+                self.wheel_rotation = new_rotation
+                if t >= self.osc_min_duration and abs(self.wheel_rotation - self.target_rotation_base) < 0.2:
+                    self.wheel_rotation = self.target_rotation_base
+                    self._handle_stop()
         
         elif self.phase == "announcing":
             if self.anim_frame % 5 == 0:
@@ -627,12 +701,17 @@ class WheelLotteryWindow(tk.Toplevel):
         else:
             self._animate_removal_particles()
 
-        self._render_wheel(display_energy)
+        resizing_recently = current_time - self._last_resize_event < 0.2
+        if not resizing_recently or (current_time - self.last_render_time) >= 0.033:
+            self._request_render(display_energy)
         self.draw_after_id = self.after(20, self._animate)
     
     def _calculate_stop_path_by_time(self):
         if not self.target_queue: return
-        target_id = self.target_queue[0]
+        # 震荡物理(目标锁定)：刹车阶段固定目标，防止瞬间跳动
+        if self.active_target_id is None:
+            self.active_target_id = str(self.target_queue[0])
+        target_id = self.active_target_id
         item = next((entry for entry in self.wheel_names if str(entry["id"]) == str(target_id)), None)
         if not item:
             self._prepare_wheel()
@@ -651,9 +730,13 @@ class WheelLotteryWindow(tk.Toplevel):
         estimated_dist = avg_speed * (self.brake_duration * 50) 
         
         extra_spins = math.ceil(estimated_dist / 360) * 360
-        
-        self.target_rotation = current_abs + rotation_needed + extra_spins
-        self.decel_factor = 0.04 
+
+        # 震荡物理(overshoot)：目标中心角+过冲角
+        self.target_rotation_base = current_abs + rotation_needed + extra_spins
+        self.overshoot_angle = random.uniform(5.0, 15.0)
+        self.target_rotation = self.target_rotation_base + self.overshoot_angle
+        self.decel_factor = 0.04
+        self.brake_phase = "braking"
 
     def _format_names_rows(self, names: list[str], per_row: int = 4) -> str:
         if not names:
@@ -666,13 +749,13 @@ class WheelLotteryWindow(tk.Toplevel):
     def _render_grand_summary(self):
         self.phase = "summary"
         self.result_var.set("🎉 所有奖项抽取完毕！")
-        self.canvas.delete("all")
+        self._clear_canvas_layers()
         
         width = self.canvas.winfo_width()
         height = self.canvas.winfo_height()
-        self.canvas.create_rectangle(0, 0, width, height, fill=self.colors["bg_canvas"], outline="")
+        self.canvas.create_rectangle(0, 0, width, height, fill=self.colors["bg_canvas"], outline="", tags="summary_bg")
         
-        self.canvas.create_text(width/2, 100, text="🏆 中奖总榜 🏆", font=("Microsoft YaHei UI", 36, "bold"), fill=self.colors["gold"])
+        self.canvas.create_text(width/2, 100, text="🏆 中奖总榜 🏆", font=("Microsoft YaHei UI", 36, "bold"), fill=self.colors["gold"], tags="summary_text")
 
         y_start = 180
         winners = self.lottery_state.get("winners", [])
@@ -733,13 +816,13 @@ class WheelLotteryWindow(tk.Toplevel):
         self._start_summary_scroll(max(column_heights), height)
 
     def _render_prize_summary(self, prize) -> None:
-        self.canvas.delete("all")
+        self._clear_canvas_layers()
         width = self.canvas.winfo_width()
         height = self.canvas.winfo_height()
-        self.canvas.create_rectangle(0, 0, width, height, fill=self.colors["bg_canvas"], outline="")
+        self.canvas.create_rectangle(0, 0, width, height, fill=self.colors["bg_canvas"], outline="", tags="prize_summary")
 
         title_text = f"🎉 {prize.name} 中奖结果"
-        self.canvas.create_text(width / 2, 90, text=title_text, font=("Microsoft YaHei UI", 32, "bold"), fill=self.colors["gold"])
+        self.canvas.create_text(width / 2, 90, text=title_text, font=("Microsoft YaHei UI", 32, "bold"), fill=self.colors["gold"], tags="prize_summary")
 
         winners = [
             winner for winner in self.lottery_state.get("winners", [])
@@ -747,7 +830,7 @@ class WheelLotteryWindow(tk.Toplevel):
         ]
         names = [winner.get("person_name", "未知") for winner in winners]
         if not names:
-            self.canvas.create_text(width / 2, height / 2, text="暂无中奖者", font=("Microsoft YaHei UI", 22, "bold"), fill=self.colors["white"])
+            self.canvas.create_text(width / 2, height / 2, text="暂无中奖者", font=("Microsoft YaHei UI", 22, "bold"), fill=self.colors["white"], tags="prize_summary")
             return
 
         total = len(names)
@@ -772,6 +855,7 @@ class WheelLotteryWindow(tk.Toplevel):
                 fill=self.colors["white"],
                 anchor="n",
                 justify=tk.LEFT,
+                tags="prize_summary",
             )
 
     def _start_summary_scroll(self, content_height: float, canvas_height: float) -> None:
@@ -841,6 +925,7 @@ class WheelLotteryWindow(tk.Toplevel):
 
     def _handle_stop(self):
         if not self.target_queue: return
+        self.active_target_id = None
         winner_id = str(self.target_queue.pop(0))
         winner_data = next((entry for entry in self.wheel_names if str(entry["id"]) == winner_id), None)
         if not winner_data:
@@ -964,8 +1049,8 @@ class WheelLotteryWindow(tk.Toplevel):
         y = random.randint(50, height-50)
         color = random.choice(self.colors["wheel_colors"])
         size = random.randint(5, 15)
-        self.canvas.create_oval(x, y, x+size, y+size, fill=color, tags="firework")
-        self.root.after(500, lambda: self.canvas.delete("firework"))
+        self.canvas.create_oval(x, y, x+size, y+size, fill=color, tags="fx_firework")
+        self.root.after(500, lambda: self.canvas.delete("fx_firework"))
 
     def _draw_text_with_outline(self, x, y, text, font, text_color, outline_color, thickness=2, tags=None, justify=tk.CENTER, angle=0):
         for dx in range(-thickness, thickness+1):
@@ -983,19 +1068,83 @@ class WheelLotteryWindow(tk.Toplevel):
                 )
         self.canvas.create_text(x, y, text=text, font=font, fill=text_color, tags=tags, justify=justify, angle=angle)
 
-    def _render_wheel(self, display_energy=0.0) -> None:
+    def _angle_distance(self, a: float, b: float) -> float:
+        diff = abs((a - b) % 360)
+        return min(diff, 360 - diff)
+
+    def _request_render(self, display_energy: float | None = None, force: bool = False) -> None:
+        """性能优化(Throttling)：渲染请求合并到固定帧率。"""
+        if display_energy is not None:
+            self.pending_display_energy = display_energy
+        if force:
+            self.force_full_render = True
+        if self.render_after_id:
+            return
+        self.render_after_id = self.after(self.render_interval_ms, self._render_wheel_throttled)
+
+    def _render_wheel_throttled(self) -> None:
+        now = time.monotonic()
+        min_interval = 0.033
+        elapsed = now - self.last_render_time
+        if elapsed < min_interval:
+            remaining = int((min_interval - elapsed) * 1000)
+            self.render_after_id = self.after(max(1, remaining), self._render_wheel_throttled)
+            return
+        self.render_after_id = None
+        self._render_wheel(self.pending_display_energy, force_full=self.force_full_render, now=now)
+        self.force_full_render = False
+
+    def _clear_canvas_layers(self) -> None:
+        self.canvas.delete(
+            "bg",
+            "wheel",
+            "text",
+            "overlay",
+            "fx_particles",
+            "fx_firework",
+            "summary_items",
+            "summary_bg",
+            "summary_text",
+            "prize_summary",
+        )
+
+    def _render_wheel(self, display_energy=0.0, force_full: bool = False, now: float | None = None) -> None:
         if self.phase in ["summary", "prize_summary"]: return 
 
-        self.canvas.delete("all")
+        if now is None:
+            now = time.monotonic()
         width = self.canvas.winfo_width()
         height = self.canvas.winfo_height()
-        
-        for p in self.bg_particles:
-            px = p["x"] * width
-            py = p["y"] * height
-            r = p["size"]
-            self.canvas.create_oval(px, py, px+r, py+r, fill=p["color"], outline="")
+        if width <= 1 or height <= 1:
+            return
 
+        size_changed = (width, height) != self.last_canvas_size
+        if size_changed:
+            self.last_canvas_size = (width, height)
+            force_full = True
+
+        # 性能优化(分层tag)：仅清理必要层级
+        if force_full or now - self.last_bg_render_time >= self.bg_update_interval:
+            self.canvas.delete("bg")
+            for p in self.bg_particles:
+                px = p["x"] * width
+                py = p["y"] * height
+                r = p["size"]
+                self.canvas.create_oval(
+                    px,
+                    py,
+                    px + r,
+                    py + r,
+                    fill=p["color"],
+                    outline="",
+                    tags="bg",
+                )
+            self.last_bg_render_time = now
+
+        self.canvas.delete("wheel")
+        self.canvas.delete("overlay")
+        self.canvas.delete("fx_particles")
+        
         top_margin = 150
         max_diameter = min(width - 40, height - top_margin - 50)
         radius = max_diameter / 2
@@ -1003,11 +1152,18 @@ class WheelLotteryWindow(tk.Toplevel):
         cy = top_margin + radius 
         
         if not self.wheel_names:
-            self.canvas.create_text(cx, cy, text="暂无数据", fill=self.colors["text_muted"], font=("Microsoft YaHei UI", 20))
+            self.canvas.create_text(
+                cx,
+                cy,
+                text="暂无数据",
+                fill=self.colors["text_muted"],
+                font=("Microsoft YaHei UI", 20),
+                tags="text",
+            )
+            self.last_render_time = now
             return
 
         total_names = len(self.wheel_names)
-        show_small_text = total_names <= 200
         
         if total_names >= 160: base_font_size = 6
         elif total_names >= 120: base_font_size = 8
@@ -1016,7 +1172,26 @@ class WheelLotteryWindow(tk.Toplevel):
         else: base_font_size = 14
         
         rotation_mod = self.wheel_rotation % 360
+        rotation_rad = math.radians(rotation_mod)
         pointer_text_top = ""
+        speed = abs(self.current_speed)
+        if self.phase == "braking":
+            text_mode = "full"
+        elif speed > self.text_speed_off:
+            text_mode = "off"
+        elif speed > self.text_speed_simple:
+            text_mode = "simple"
+        else:
+            text_mode = "full"
+        should_update_text = text_mode != "off"
+        if text_mode == "off":
+            if self.text_render_mode != "off":
+                self.canvas.delete("text")
+            self.text_render_mode = "off"
+        elif should_update_text:
+            self.canvas.delete("text")
+            self.last_text_render_time = now
+            self.text_render_mode = text_mode
 
         for item in self.wheel_names:
             segment_extent = self.segment_angle
@@ -1036,36 +1211,82 @@ class WheelLotteryWindow(tk.Toplevel):
                     fill=item["color"],
                     outline=item["color"],
                     width=1,
+                    tags="wheel",
                 )
             
             mid_angle = (item["angle_center"] + rotation_mod) % 360
-            dist_to_90 = abs(mid_angle - 90)
-            if dist_to_90 < self.segment_angle / 2:
+            dist_to_pointer = self._angle_distance(mid_angle, 90)
+            if dist_to_pointer < self.segment_angle / 2:
                 pointer_text_top = item["full_text"]
 
-            if show_small_text:
-                mid_angle_rad = math.radians(mid_angle)
-                text_radius = radius * 0.8
-                tx = cx + text_radius * math.cos(mid_angle_rad)
-                ty = cy - text_radius * math.sin(mid_angle_rad)
-                display_on_wheel = item["name"]
-                if total_names < 50: display_on_wheel = f"{item['name']}"
-                text_angle = mid_angle
-                if 90 < mid_angle < 270: text_angle += 180
-                self._draw_text_with_outline(
-                    tx,
-                    ty,
-                    display_on_wheel,
-                    ("Microsoft YaHei UI", base_font_size, "bold"),
-                    text_color=self.colors["white"],
-                    outline_color=self.colors["red_deep"],
-                    thickness=2,
-                    tags=None,
-                    justify=tk.CENTER,
-                    angle=text_angle,
-                )
+            if should_update_text and text_mode != "off":
+                if text_mode == "simple":
+                    mid_angle_rad = item["angle_center_rad"] + rotation_rad
+                    text_radius = radius * 0.8
+                    tx = cx + text_radius * math.cos(mid_angle_rad)
+                    ty = cy - text_radius * math.sin(mid_angle_rad)
+                    display_on_wheel = "".join(item.get("name_chars", [item["name"]]))
+                    text_angle = mid_angle
+                    if 90 < mid_angle < 270:
+                        text_angle += 180
+                    self.canvas.create_text(
+                        tx,
+                        ty,
+                        text=display_on_wheel,
+                        font=("Microsoft YaHei UI", base_font_size, "bold"),
+                        fill=self.colors["white"],
+                        tags="text",
+                        justify=tk.CENTER,
+                        angle=text_angle,
+                    )
+                elif text_mode == "full":
+                    mid_angle_rad = item["angle_center_rad"] + rotation_rad
+                    name_chars = item.get("name_chars", [item["name"]])
+                    base_radius = radius * 0.55
+                    char_step = min(12.0, radius * 0.04)
+                    text_angle = mid_angle
+                    if 90 < mid_angle < 270:
+                        text_angle += 180
+                    draw_outline = total_names <= 120
+                    for char_index, char in enumerate(name_chars):
+                        text_radius = base_radius + char_index * char_step
+                        tx = cx + text_radius * math.cos(mid_angle_rad)
+                        ty = cy - text_radius * math.sin(mid_angle_rad)
+                        if draw_outline:
+                            self._draw_text_with_outline(
+                                tx,
+                                ty,
+                                char,
+                                ("Microsoft YaHei UI", base_font_size, "bold"),
+                                text_color=self.colors["white"],
+                                outline_color=self.colors["red_deep"],
+                                thickness=1,
+                                tags="text",
+                                justify=tk.CENTER,
+                                angle=text_angle,
+                            )
+                        else:
+                            self.canvas.create_text(
+                                tx,
+                                ty,
+                                text=char,
+                                font=("Microsoft YaHei UI", base_font_size, "bold"),
+                                fill=self.colors["white"],
+                                tags="text",
+                                justify=tk.CENTER,
+                                angle=text_angle,
+                            )
 
-        self.canvas.create_oval(cx - 70, cy - 70, cx + 70, cy + 70, fill=self.colors["white"], outline=self.colors["gold"], width=4)
+        self.canvas.create_oval(
+            cx - 70,
+            cy - 70,
+            cx + 70,
+            cy + 70,
+            fill=self.colors["white"],
+            outline=self.colors["gold"],
+            width=4,
+            tags="overlay",
+        )
         
         center_text_big = "LUCKY"
         center_text_small = ""
@@ -1083,16 +1304,58 @@ class WheelLotteryWindow(tk.Toplevel):
             except Exception:
                 pass
         
-        self._draw_text_with_outline(cx, cy - 10, center_text_big, ("Microsoft YaHei UI", 24, "bold"), self.colors["red"], "white", thickness=2)
-        self.canvas.create_text(cx, cy + 25, text=center_text_small, font=("Microsoft YaHei UI", 12, "bold"), fill=self.colors["text_muted"])
+        self._draw_text_with_outline(
+            cx,
+            cy - 10,
+            center_text_big,
+            ("Microsoft YaHei UI", 24, "bold"),
+            self.colors["red"],
+            "white",
+            thickness=2,
+            tags="overlay",
+        )
+        self.canvas.create_text(
+            cx,
+            cy + 25,
+            text=center_text_small,
+            font=("Microsoft YaHei UI", 12, "bold"),
+            fill=self.colors["text_muted"],
+            tags="overlay",
+        )
 
-        self.canvas.create_polygon(cx, cy - radius + 50, cx - 15, cy - radius + 10, cx + 15, cy - radius + 10, fill=self.colors["red"], outline="white", width=2)
+        self.canvas.create_polygon(
+            cx,
+            cy - radius + 50,
+            cx - 15,
+            cy - radius + 10,
+            cx + 15,
+            cy - radius + 10,
+            fill=self.colors["red"],
+            outline="white",
+            width=2,
+            tags="overlay",
+        )
         
         if pointer_text_top:
             bg_rect_y = cy - radius - 80
-            self.canvas.create_rectangle(cx - 250, bg_rect_y, cx + 250, bg_rect_y + 60, fill="#7A1616", outline=self.colors["gold_deep"], width=2, tags="overlay")
-            self.canvas.create_text(cx, bg_rect_y + 30, text=pointer_text_top, font=("Microsoft YaHei UI", 24, "bold"), fill=self.colors["gold"], tags="overlay")
-            self.canvas.tag_raise("overlay")
+            self.canvas.create_rectangle(
+                cx - 250,
+                bg_rect_y,
+                cx + 250,
+                bg_rect_y + 60,
+                fill="#7A1616",
+                outline=self.colors["gold_deep"],
+                width=2,
+                tags="overlay",
+            )
+            self.canvas.create_text(
+                cx,
+                bg_rect_y + 30,
+                text=pointer_text_top,
+                font=("Microsoft YaHei UI", 24, "bold"),
+                fill=self.colors["gold"],
+                tags="overlay",
+            )
 
         self._render_removal_particles()
 
@@ -1102,7 +1365,16 @@ class WheelLotteryWindow(tk.Toplevel):
             bar_x = width - 60 
             bar_bottom_y = height - 50 
             
-            self.canvas.create_rectangle(bar_x, bar_bottom_y - bar_max_h, bar_x + bar_w, bar_bottom_y, outline=self.colors["panel_border"], width=2, fill=self.colors["red_deep"])
+            self.canvas.create_rectangle(
+                bar_x,
+                bar_bottom_y - bar_max_h,
+                bar_x + bar_w,
+                bar_bottom_y,
+                outline=self.colors["panel_border"],
+                width=2,
+                fill=self.colors["red_deep"],
+                tags="overlay",
+            )
             
             fill_h = bar_max_h * display_energy
             if fill_h < 0: fill_h = 0
@@ -1112,12 +1384,36 @@ class WheelLotteryWindow(tk.Toplevel):
             elif display_energy > 0.3: bar_color = self.colors["gold"]
             else: bar_color = self.colors["gold_deep"]
             
-            self.canvas.create_rectangle(bar_x, fill_top_y, bar_x + bar_w, bar_bottom_y, fill=bar_color, outline="")
+            self.canvas.create_rectangle(
+                bar_x,
+                fill_top_y,
+                bar_x + bar_w,
+                bar_bottom_y,
+                fill=bar_color,
+                outline="",
+                tags="overlay",
+            )
             
             if self.phase == "charging":
-                self.canvas.create_text(bar_x - 15, fill_top_y, text=self.encouragement_text, fill="white", font=("Microsoft YaHei UI", 16, "bold"), anchor="e")
+                self.canvas.create_text(
+                    bar_x - 15,
+                    fill_top_y,
+                    text=self.encouragement_text,
+                    fill="white",
+                    font=("Microsoft YaHei UI", 16, "bold"),
+                    anchor="e",
+                    tags="overlay",
+                )
             
-            self.canvas.create_text(bar_x + bar_w/2, bar_bottom_y + 25, text="动能", fill=self.colors["text_muted"], font=("Microsoft YaHei UI", 9))
+            self.canvas.create_text(
+                bar_x + bar_w / 2,
+                bar_bottom_y + 25,
+                text="动能",
+                fill=self.colors["text_muted"],
+                font=("Microsoft YaHei UI", 9),
+                tags="overlay",
+            )
+        self.last_render_time = now
 
     def _get_current_prize(self):
         label = self.prize_var.get()
@@ -1330,7 +1626,10 @@ class WheelLotteryWindow(tk.Toplevel):
             self.segment_angle = 360.0 / len(self.wheel_names)
             for i, item in enumerate(self.wheel_names):
                 item["index"] = i
-                item["angle_center"] = i * self.segment_angle + self.segment_angle / 2
+                angle_center = i * self.segment_angle + self.segment_angle / 2
+                item["angle_center"] = angle_center
+                # 性能优化(缓存)：同步更新中心角弧度
+                item["angle_center_rad"] = math.radians(angle_center)
         else:
             self.segment_angle = 0.0
 
@@ -1383,4 +1682,5 @@ class WheelLotteryWindow(tk.Toplevel):
                 y + size,
                 fill=particle["color"],
                 outline="",
+                tags="fx_particles",
             )
