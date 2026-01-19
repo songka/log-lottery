@@ -132,7 +132,7 @@ class WheelLotteryWindow(tk.Toplevel):
         
         self._build_ui()
         self._bind_controls()
-        self._refresh_prize_options()
+        self._refresh_prize_options(hide_completed=True)
         self._refresh_history_list() 
         self._animate()
         self._start_auto_scroll() 
@@ -822,7 +822,7 @@ class WheelLotteryWindow(tk.Toplevel):
         current_val = self.prize_var.get()
         current_id = current_val.split(" - ")[0] if current_val else None
         
-        self._refresh_prize_options()
+        self._refresh_prize_options(hide_completed=False)
         self._refresh_history_list()
         
         is_busy = bool(self.target_queue) or (self.phase not in ["idle", "finished", "wait_for_manual"])
@@ -843,19 +843,20 @@ class WheelLotteryWindow(tk.Toplevel):
             self.prize_var.set(target_option)
             self._prepare_wheel()
 
-    def _refresh_prize_options(self) -> None:
+    def _refresh_prize_options(self, hide_completed: bool = True) -> None:
         options = []
         for prize in self.prizes:
             remaining = remaining_slots(prize, self.lottery_state)
-            if remaining > 0:
+            if remaining > 0 or not hide_completed:
                 options.append(f"{prize.prize_id} - {prize.name} (剩余 {remaining})")
             
         self.prize_combo["values"] = options
         
         current = self.prize_var.get()
         if options and (not current or current not in options):
-            self.prize_var.set(options[0])
-            self._prepare_wheel()
+            if hide_completed:
+                self.prize_var.set(options[0])
+                self._prepare_wheel()
         elif not options:
             self.prize_var.set("") 
 
@@ -1077,6 +1078,7 @@ class WheelLotteryWindow(tk.Toplevel):
     def _confirm_prize_result(self) -> None:
         self.is_showing_prize_result = False
         if self._has_next_prize():
+            self._refresh_prize_options(hide_completed=True)
             self._go_next_prize()
         else:
             self._render_grand_summary()
