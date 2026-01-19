@@ -113,6 +113,10 @@ class WheelLotteryWindow(tk.Toplevel):
         self.post_removal_phase: str | None = None
         self.is_showing_prize_result = False
         self.tts_playing = False
+        self.tts_done_event = threading.Event()
+        self.tts_lock = threading.Lock()
+        self.tts_engine = pyttsx3.init() if TTS_AVAILABLE else None
+        self.tts_done_event.set()
         self.pending_removal_data: dict[str, Any] | None = None
         self.pending_removal_idx = -1
         self.removal_particles: list[dict[str, Any]] = []
@@ -588,7 +592,7 @@ class WheelLotteryWindow(tk.Toplevel):
         elif self.phase == "announcing":
             if self.anim_frame % 5 == 0:
                 self._create_firework()
-            if not self.tts_playing:
+            if self.tts_done_event.is_set():
                 self._begin_removal_after_announcement()
         elif self.phase == "auto_wait":
             if self.anim_frame % 5 == 0: self._create_firework()
@@ -789,38 +793,45 @@ class WheelLotteryWindow(tk.Toplevel):
         self.summary_scroll_after_id = self.after(40, _tick)
 
     def _speak_winner(self, department: str, person_id: str, name: str, prize_label: str) -> None:
-        if not TTS_AVAILABLE or self.tts_playing:
+        if not TTS_AVAILABLE:
+            self.tts_playing = False
+            self.tts_done_event.set()
             return
+        self.tts_done_event.clear()
         self.tts_playing = True
 
         def _speak():
             try:
-                engine = pyttsx3.init()
-                voices = engine.getProperty('voices')
+                with self.tts_lock:
+                    engine = self.tts_engine
+                    if engine is None:
+                        raise RuntimeError("TTS engine not available")
+                    voices = engine.getProperty('voices')
                 
-                # 语音优化：优先寻找更自然的中文女声
-                preferred_voices = ["YAOYAO", "HUIHUI", "XIAOXIAO", "ZH-CN"]
-                selected_voice = None
-                for pref in preferred_voices:
-                    for v in voices:
-                        if pref in v.name.upper() or pref in v.id.upper():
-                            selected_voice = v.id
-                            break
-                    if selected_voice: break
-                
-                if selected_voice:
-                    engine.setProperty('voice', selected_voice)
-                
-                # Bug4: 工号+姓名需慢一点播报
-                engine.setProperty('rate', 150)
-                engine.say(f"恭喜 {person_id}")
-                engine.say(f"{name}")
-                engine.say(f"获得 {prize_label}")
-                engine.runAndWait()
-            except:
+                    # 语音优化：优先寻找更自然的中文女声
+                    preferred_voices = ["YAOYAO", "HUIHUI", "XIAOXIAO", "ZH-CN"]
+                    selected_voice = None
+                    for pref in preferred_voices:
+                        for v in voices:
+                            if pref in v.name.upper() or pref in v.id.upper():
+                                selected_voice = v.id
+                                break
+                        if selected_voice: break
+                    
+                    if selected_voice:
+                        engine.setProperty('voice', selected_voice)
+                    
+                    # Bug4: 工号+姓名需慢一点播报
+                    engine.setProperty('rate', 150)
+                    engine.say(f"恭喜 {person_id}")
+                    engine.say(f"{name}")
+                    engine.say(f"获得 {prize_label}")
+                    engine.runAndWait()
+            except Exception:
                 pass
             finally:
                 self.tts_playing = False
+                self.tts_done_event.set()
 
         threading.Thread(target=_speak, daemon=True).start()
 
@@ -853,15 +864,13 @@ class WheelLotteryWindow(tk.Toplevel):
         self.pending_removal_data = winner_data
         self.pending_removal_idx = winner_data.get("index", -1)
 
-        remaining = 0
+        # 核心修复：如果是最后一个人，先进入 removing 状态，等 finalize_removal 再处理结算
         current_prize = self._get_current_prize()
-        if current_prize:
-            remaining = remaining_slots(current_prize, self.lottery_state)
-
+        remaining = remaining_slots(current_prize, self.lottery_state) if current_prize else 0
         if remaining <= 0 and not self.target_queue:
-            post_removal_phase = "prize_summary"
+            self.post_removal_phase = "prize_summary"
         else:
-            self.post_removal_phase = "idle"
+            self.post_removal_phase = "auto_wait"
             
         self.phase = "announcing"
         self.result_var.set("🎙️ 正在播报中奖结果...")
