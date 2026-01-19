@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""UI layout and event binding for the wheel window."""
+
+from __future__ import annotations
+
+import time
+import tkinter as tk
+from tkinter import simpledialog, ttk
+
+from lottery import remaining_slots
+
+
+class WheelWindowUI:
+    def _build_ui(self) -> None:
+        """Frame + Grid 布局"""
+        main_container = tk.Frame(self, bg=self.colors["panel_bg"])
+        main_container.pack(fill=tk.BOTH, expand=True)
+
+        # ================= 左侧面板 =================
+        left_sidebar = tk.Frame(main_container, bg=self.colors["panel_bg"], width=320)
+        left_sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        left_sidebar.pack_propagate(False)
+
+        # 标题区
+        title_frame = tk.Frame(left_sidebar, bg=self.colors["panel_bg"], pady=30)
+        title_frame.pack(fill=tk.X)
+        self.title_label = tk.Label(title_frame, textvariable=self.title_text_var, font=("Microsoft YaHei UI", 18, "bold"), bg=self.colors["panel_bg"], fg=self.colors["gold"], wraplength=300)
+        self.title_label.pack()
+        self.title_label.bind("<Double-Button-1>", self._edit_title)
+        tk.Label(title_frame, text="(双击修改标题)", font=("Arial", 8), bg=self.colors["panel_bg"], fg=self.colors["text_muted"]).pack(pady=2)
+
+        tk.Label(left_sidebar, text="🏆 荣耀榜单", font=("Microsoft YaHei UI", 14), bg=self.colors["panel_bg"], fg=self.colors["white"]).pack(pady=(10, 5))
+
+        self.history_listbox = tk.Listbox(
+            left_sidebar, 
+            bg="#7A1616", 
+            fg=self.colors["white"], 
+            font=("Microsoft YaHei UI", 12), 
+            highlightthickness=0, 
+            borderwidth=0,
+            activestyle="none",
+        )
+        self.history_listbox.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+
+        # ================= 右侧面板 =================
+        right_sidebar = tk.Frame(main_container, bg=self.colors["panel_bg"], width=320)
+        right_sidebar.pack(side=tk.RIGHT, fill=tk.Y)
+        right_sidebar.pack_propagate(False)
+
+        # 结果提示
+        status_frame = tk.Frame(right_sidebar, bg=self.colors["panel_bg"], pady=20)
+        status_frame.pack(fill=tk.X)
+        tk.Label(status_frame, text="开奖状态", bg=self.colors["panel_bg"], fg=self.colors["text_muted"], font=("Microsoft YaHei UI", 12)).pack(anchor=tk.W, padx=20)
+        self.status_label = tk.Label(status_frame, textvariable=self.result_var, bg=self.colors["panel_bg"], fg=self.colors["gold"], font=("Microsoft YaHei UI", 16, "bold"), wraplength=300, justify=tk.LEFT)
+        self.status_label.pack(anchor=tk.W, pady=(5, 0))
+
+        # 本轮名单
+        tk.Label(right_sidebar, text="🎉 本轮中奖", bg=self.colors["panel_bg"], fg=self.colors["gold"], font=("Microsoft YaHei UI", 12, "bold")).pack(anchor=tk.W, padx=20, pady=(20, 5))
+        
+        list_frame = tk.Frame(right_sidebar, bg=self.colors["panel_border"], padx=1, pady=1) 
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+        
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical", bg=self.colors["panel_bg"])
+        self.winner_listbox = tk.Listbox(list_frame, bg="#7A1616", fg=self.colors["white"], font=("Microsoft YaHei UI", 13), highlightthickness=0, borderwidth=0, yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.winner_listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.winner_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 底部控制
+        ctrl_frame = tk.Frame(right_sidebar, bg=self.colors["panel_bg"], padx=20, pady=30)
+        ctrl_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        tk.Label(ctrl_frame, text="选择奖项:", bg=self.colors["panel_bg"], fg=self.colors["text_muted"]).pack(anchor=tk.W)
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure("TCombobox", fieldbackground="#7A1616", background="#8B1A1A", foreground=self.colors["white"], arrowcolor=self.colors["white"], font=("Microsoft YaHei UI", 12))
+        
+        self.prize_combo = ttk.Combobox(ctrl_frame, textvariable=self.prize_var, state="readonly", font=("Microsoft YaHei UI", 12))
+        self.prize_combo.pack(fill=tk.X, pady=(2, 15), ipady=5)
+        self.prize_combo.bind("<<ComboboxSelected>>", self._handle_prize_change)
+
+        self.action_btn = tk.Button(ctrl_frame, text="按住蓄力 / 点击开始", bg=self.colors["gold"], fg="#5C1010", font=("Microsoft YaHei UI", 16, "bold"), relief="flat", cursor="hand2")
+        self.action_btn.pack(fill=tk.X, pady=(0, 10), ipady=10)
+        self.action_btn.bind("<ButtonPress-1>", self._on_btn_down)
+        self.action_btn.bind("<ButtonRelease-1>", self._on_btn_up)
+        
+        self.reset_btn = tk.Button(ctrl_frame, text="⟳ 重置名单 (清空队列)", command=self._prepare_wheel, bg=self.colors["panel_border"], fg=self.colors["white"], font=("Microsoft YaHei UI", 10), relief="flat", cursor="hand2")
+        self.reset_btn.pack(fill=tk.X)
+
+        # ================= 中间画布 =================
+        self.canvas = tk.Canvas(main_container, bg=self.colors["bg_canvas"], highlightthickness=0)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # 性能优化(Throttling)：窗口变化时仅请求限频重绘
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+    def _edit_title(self, event):
+        new_title = simpledialog.askstring("设置", "修改大屏标题：", initialvalue=self.title_text_var.get(), parent=self)
+        if new_title:
+            self.title_text_var.set(new_title)
+
+    def _bind_controls(self):
+        self.bind("<KeyPress-space>", self._on_key_down)
+        self.bind("<KeyRelease-space>", self._on_key_up)
+        self.bind("<F11>", self._toggle_fullscreen)
+        self.focus_set()
+
+    def _on_canvas_configure(self, event) -> None:
+        """性能优化(Throttling)：窗口拖动/缩放时合并重绘请求。"""
+        self._last_resize_event = time.monotonic()
+        if self._pending_resize_render:
+            return
+        self._pending_resize_render = True
+
+        def _run():
+            self._pending_resize_render = False
+            self._last_resize_render_time = time.monotonic()
+            self._resize_render_after_id = None
+            self._request_render(force=True)
+
+        self._resize_render_after_id = self.after(33, _run)
+
+    def _toggle_fullscreen(self, event=None):
+        self.is_fullscreen = not self.is_fullscreen
+        self.attributes("-fullscreen", self.is_fullscreen)
+        if self.is_fullscreen:
+            self.normal_geometry = self.geometry()
+            screen_x, screen_y, screen_w, screen_h = self._get_current_screen_geometry()
+            self.geometry(f"{screen_w}x{screen_h}+{screen_x}+{screen_y}")
+        else:
+            if self.normal_geometry:
+                self.geometry(self.normal_geometry)
+            else:
+                self.geometry("1440x900")
+
+    def _handle_close(self) -> None:
+        if self.draw_after_id: self.after_cancel(self.draw_after_id)
+        if self.render_after_id: self.after_cancel(self.render_after_id)
+        if self._resize_render_after_id: self.after_cancel(self._resize_render_after_id)
+        if self.scroll_after_id: self.after_cancel(self.scroll_after_id)
+        if self.summary_scroll_after_id: self.after_cancel(self.summary_scroll_after_id)
+        self.destroy()
+        if self.on_close: self.on_close()
+
+    def _refresh_prize_options(self, hide_completed: bool = False) -> None:
+        """
+        刷新奖项下拉列表。
+        :param hide_completed: 是否强制隐藏剩余0的奖项（仅初始化和手动切换时为 True）
+        """
+        options = []
+        current_val = self.prize_var.get()
+        current_id = current_val.split(" - ")[0] if current_val else None
+
+        for prize in self.prizes:
+            remaining = remaining_slots(prize, self.lottery_state)
+            # 隐藏逻辑：只有在要求隐藏、名额为0，且【不是当前选中项】时才剔除
+            if hide_completed and remaining <= 0 and prize.prize_id != current_id:
+                continue
+            
+            options.append(f"{prize.prize_id} - {prize.name} (剩余 {remaining})")
+            
+        self.prize_combo["values"] = options
+        
+        # 初始选择逻辑
+        if options and (not self.prize_var.get() or self.prize_var.get() not in options):
+            self.prize_var.set(options[0])
+            self._prepare_wheel()
+
+    def _refresh_history_list(self) -> None:
+        if not hasattr(self, "history_listbox"): return
+        self.history_listbox.delete(0, tk.END)
+        
+        winners = self.lottery_state.get("winners", [])
+        for w in reversed(winners):
+            name = w.get('person_name', '未知')
+            prize = w.get('prize_name', '奖品')
+            self.history_listbox.insert(tk.END, f"🎗 {prize} - {name}")
+
+    def _handle_prize_change(self, event: tk.Event) -> None:
+        if self.phase in ["idle", "finished", "wait_for_manual"]:
+             self.target_queue = [] 
+             self._prepare_wheel()
+
+    def _update_btn_state(self):
+        if self.phase == "prize_summary":
+            if self._has_next_prize():
+                self.action_btn.config(text="确认并继续", bg=self.colors["gold"], fg="#5C1010", state="normal")
+            else:
+                self.action_btn.config(text="确认并查看总榜", bg=self.colors["gold"], fg="#5C1010", state="normal")
+            self.prize_combo.config(state="readonly")
+        elif self.phase == "announcing":
+            self.action_btn.config(text="🎙️ 播报中...", bg=self.colors["red_deep"], fg=self.colors["white"], state="normal")
+            self.prize_combo.config(state="disabled")
+        elif self.phase in ["charging", "spinning", "braking", "auto_wait", "removing"]:
+            self.action_btn.config(text="STOP (点击暂停)", bg=self.colors["red"], fg=self.colors["white"], state="normal")
+            self.prize_combo.config(state="disabled") 
+        elif self.phase == "wait_for_manual":
+             remaining = self._current_prize_remaining()
+             if remaining <= 0:
+                 self.action_btn.config(text="该奖项已抽完", bg=self.colors["panel_border"], fg=self.colors["white"], state="disabled")
+             else:
+                 self.action_btn.config(text="继续 (长按蓄力)", bg=self.colors["panel_border"], fg=self.colors["white"], state="normal")
+             self.prize_combo.config(state="readonly") 
+        else:
+            remaining = self._current_prize_remaining()
+            if remaining <= 0:
+                self.action_btn.config(text="该奖项已抽完", bg=self.colors["panel_border"], fg=self.colors["white"], state="disabled")
+            else:
+                self.action_btn.config(text="按住蓄力 / 点击开始", bg=self.colors["gold"], fg="#5C1010", state="normal")
+            self.prize_combo.config(state="readonly")
+
+        if self.phase in ["idle", "wait_for_manual", "prize_summary"]:
+            self.reset_btn.pack(fill=tk.X, pady=0, before=self.action_btn)
+        else:
+            self.reset_btn.pack_forget()
+
+    def _get_current_screen_geometry(self) -> tuple[int, int, int, int]:
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        root_x = self.winfo_rootx()
+        root_y = self.winfo_rooty()
+        screen_x = root_x - (root_x % screen_w)
+        screen_y = root_y - (root_y % screen_h)
+        return screen_x, screen_y, screen_w, screen_h
