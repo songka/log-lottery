@@ -570,17 +570,13 @@ class WheelLotteryWindow(tk.Toplevel):
         for i, person in enumerate(eligible):
             dept = getattr(person, 'department', '')
             full_text = f"{dept} {person.person_id} {person.name}".strip()
-            angle_center = i * self.segment_angle + self.segment_angle / 2
             self.wheel_names.append({
                 "index": i,
                 "id": str(person.person_id),
                 "name": person.name,
-                # 性能优化(缓存)：预计算字符列表与中心角弧度
-                "name_chars": list(person.name),
                 "full_text": full_text,
                 "color": random_colors[i % len(random_colors)],
-                "angle_center": angle_center,
-                "angle_center_rad": math.radians(angle_center),
+                "angle_center": i * self.segment_angle + self.segment_angle / 2
             })
 
         self.phase = "idle"
@@ -626,46 +622,27 @@ class WheelLotteryWindow(tk.Toplevel):
             elapsed = current_time - self.spin_start_time
             if elapsed < self.spin_duration:
                 progress = elapsed / self.spin_duration
-                display_energy = max(0.0, self.locked_charge * (1.0 - progress))
-                # 震荡物理(动能线性消耗)：速度随动能线性衰减
-                v_max = 28.0 + 8.0 * self.locked_charge
-                v_min = 6.0 + 4.0 * (1.0 - self.locked_charge)
-                self.current_speed = v_min + (v_max - v_min) * display_energy
+                display_energy = self.locked_charge * (1.0 - progress)
+                self.current_speed = 30.0 + math.sin(current_time * 5) * 0.5
                 self.wheel_rotation += self.current_speed
             else:
                 self.phase = "braking"
-                self.force_full_render = True
                 self._calculate_stop_path_by_time() 
 
         elif self.phase == "braking":
             display_energy = 0
-            if self.brake_phase == "braking":
-                # 震荡物理(平滑刹车)：easeOutCubic 插值到过冲点
-                elapsed = current_time - self.brake_start_time
-                t = min(1.0, max(0.0, elapsed / max(self.brake_duration, 0.01)))
-                ease = 1.0 - (1.0 - t) ** 3
-                self.wheel_rotation = self.brake_start_rotation + (self.target_rotation - self.brake_start_rotation) * ease
-                if t >= 1.0:
-                    # 震荡物理(overshoot+oscillating)：进入二阶阻尼振荡
-                    self.brake_phase = "oscillating"
-                    self.osc_start_time = current_time
-                    # 震荡物理(二阶阻尼)：重型机械质感，降低频率并提高阻尼
-                    self.osc_A = self.overshoot_angle * 0.85
-                    self.osc_omega = random.uniform(8.0, 12.0)
-                    self.osc_zeta = random.uniform(0.35, 0.5)
-            else:
-                t = current_time - self.osc_start_time
-                if t < 0:
-                    t = 0.0
-                # 震荡物理(二阶阻尼)：TargetBase + A * exp(-zeta*omega*t) * cos(omega_d*t)
-                omega_d = self.osc_omega * math.sqrt(max(0.0, 1.0 - self.osc_zeta ** 2))
-                decay = math.exp(-self.osc_zeta * self.osc_omega * t)
-                new_rotation = self.target_rotation_base + self.osc_A * decay * math.cos(omega_d * t)
-                self.current_speed = abs(new_rotation - self.wheel_rotation) / max(dt, 0.001)
-                self.wheel_rotation = new_rotation
-                if t >= self.osc_min_duration and abs(self.wheel_rotation - self.target_rotation_base) < 0.2:
-                    self.wheel_rotation = self.target_rotation_base
-                    self._handle_stop()
+            dist_remaining = self.target_rotation - self.wheel_rotation
+            step = dist_remaining * self.decel_factor
+            
+            min_speed = 0.1
+            if step < min_speed: step = min_speed
+            if step > dist_remaining: step = dist_remaining
+
+            self.wheel_rotation += step
+            
+            if dist_remaining < 0.2:
+                self.wheel_rotation = self.target_rotation 
+                self._handle_stop()
         
         elif self.phase == "announcing":
             if self.anim_frame % 5 == 0:
@@ -709,10 +686,7 @@ class WheelLotteryWindow(tk.Toplevel):
     
     def _calculate_stop_path_by_time(self):
         if not self.target_queue: return
-        # 震荡物理(目标锁定)：刹车阶段固定目标，防止瞬间跳动
-        if self.active_target_id is None:
-            self.active_target_id = str(self.target_queue[0])
-        target_id = self.active_target_id
+        target_id = self.target_queue[0]
         item = next((entry for entry in self.wheel_names if str(entry["id"]) == str(target_id)), None)
         if not item:
             self._prepare_wheel()
@@ -731,15 +705,9 @@ class WheelLotteryWindow(tk.Toplevel):
         estimated_dist = avg_speed * (self.brake_duration * 50) 
         
         extra_spins = math.ceil(estimated_dist / 360) * 360
-
-        # 震荡物理(overshoot)：目标中心角+过冲角
-        self.target_rotation_base = current_abs + rotation_needed + extra_spins
-        self.overshoot_angle = random.uniform(5.0, 15.0)
-        self.target_rotation = self.target_rotation_base + self.overshoot_angle
-        self.decel_factor = 0.04
-        self.brake_phase = "braking"
-        self.brake_start_time = time.monotonic()
-        self.brake_start_rotation = current_abs
+        
+        self.target_rotation = current_abs + rotation_needed + extra_spins
+        self.decel_factor = 0.04 
 
     def _format_names_rows(self, names: list[str], per_row: int = 4) -> str:
         if not names:
