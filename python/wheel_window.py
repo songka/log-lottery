@@ -629,7 +629,7 @@ class WheelLotteryWindow(tk.Toplevel):
             self.current_speed = max(0.0, self.current_speed - a)
             self.wheel_rotation += self.current_speed
 
-            if dist_remaining < 0.2 or self.current_speed == 0:
+            if (self.target_rotation - self.wheel_rotation) <= 0.2 or self.current_speed == 0:
                 self.wheel_rotation = self.target_rotation 
                 self._handle_stop()
         
@@ -1125,7 +1125,7 @@ class WheelLotteryWindow(tk.Toplevel):
                 pointer_text_top = item["full_text"]
 
             if show_small_text:
-                # 【5】扇区文字只显示姓名，沿半径从内到外排布
+                # 【5】扇区文字仅显示姓名，减少排列与对齐，保持方向固定
                 name_text = item["name"] or ""
                 display_name = name_text
                 font_size = base_font_size
@@ -1135,30 +1135,32 @@ class WheelLotteryWindow(tk.Toplevel):
                 elif len(display_name) > 6:
                     font_size = max(min_font_size, base_font_size - 1)
 
-                name_chars = list(display_name)
                 mid_angle_rad = math.radians(mid_angle)
-                r_start = radius * 0.50
-                r_end = radius * 0.86
-                step = (r_end - r_start) / max(1, len(name_chars) - 1)
-                text_angle = mid_angle
-                if 90 < mid_angle < 270:
-                    text_angle += 180
-
-                for i, ch in enumerate(name_chars):
-                    text_radius = r_start + i * step
-                    tx = cx + text_radius * math.cos(mid_angle_rad)
-                    ty = cy - text_radius * math.sin(mid_angle_rad)
+                text_radius = radius * 0.68
+                tx = cx + text_radius * math.cos(mid_angle_rad)
+                ty = cy - text_radius * math.sin(mid_angle_rad)
+                if total_names > 120:
+                    self.canvas.create_text(
+                        tx,
+                        ty,
+                        text=display_name,
+                        font=("Microsoft YaHei UI", font_size, "bold"),
+                        fill=self.colors["white"],
+                        justify=tk.CENTER,
+                        angle=0,
+                    )
+                else:
                     self._draw_text_with_outline(
                         tx,
                         ty,
-                        ch,
+                        display_name,
                         ("Microsoft YaHei UI", font_size, "bold"),
                         text_color=self.colors["white"],
                         outline_color=self.colors["red_deep"],
                         thickness=2,
                         tags=None,
                         justify=tk.CENTER,
-                        angle=text_angle,
+                        angle=0,
                     )
 
         self.canvas.create_oval(cx - 70, cy - 70, cx + 70, cy + 70, fill=self.colors["white"], outline=self.colors["gold"], width=4)
