@@ -59,17 +59,20 @@ class WheelLotteryWindow(tk.Toplevel):
         self.is_fullscreen = False
         self.normal_geometry = ""
         
-        # --- 配色方案 (Festive Red) ---
+        # --- 配色方案 (喜庆红金主题) ---  # Bug5: 替换整体 UI 为红金风格
         self.colors = {
-            "bg_canvas": "#4B0A0A",
-            "panel_bg": "#3C0707",
-            "panel_border": "#6B1111",
-            "gold": "#FFD45E",
-            "cyan": "#6BE9FF",
-            "red": "#FF3B3B",
-            "text_main": "#FFFFFF",
-            "wheel_colors": ["#FF3B3B", "#FFD45E", "#FF8C42", "#FEE440", "#E63946", "#FF6F91"],
-            "summary_bg": "#2E0000",
+            "bg_canvas": "#4A0C0C",
+            "panel_bg": "#5C1010",
+            "panel_border": "#8B1A1A",
+            "gold": "#F7D774",
+            "gold_deep": "#D9A441",
+            "white": "#FFF8E7",
+            "red": "#E53935",
+            "red_deep": "#B71C1C",
+            "accent": "#FFD700",
+            "text_main": "#FFF8E7",
+            "text_muted": "#F6D9B8",
+            "wheel_colors": ["#E53935", "#C62828", "#F4C542", "#FF8A65", "#FFD54F"]
         }
         self.configure(bg=self.colors["panel_bg"])
 
@@ -110,6 +113,8 @@ class WheelLotteryWindow(tk.Toplevel):
         self.post_removal_phase: str | None = None
         self.is_showing_prize_result = False
         self.tts_playing = False
+        self.pending_removal_data: dict[str, Any] | None = None
+        self.pending_removal_idx = -1
         self.removal_particles: list[dict[str, Any]] = []
         self.pending_removal_data: dict[str, Any] | None = None
         
@@ -146,7 +151,7 @@ class WheelLotteryWindow(tk.Toplevel):
             "y": random.random(),
             "size": random.randint(1, 3),
             "speed": random.uniform(0.0003, 0.0015),
-            "color": random.choice(["#ffffff", "#FFD45E", "#FF6F91", "#FF3B3B"])
+            "color": random.choice(["#FFF8E7", "#F4C542", "#E53935", "#B71C1C"])
         }
 
     def _build_ui(self) -> None:
@@ -165,16 +170,16 @@ class WheelLotteryWindow(tk.Toplevel):
         self.title_label = tk.Label(title_frame, textvariable=self.title_text_var, font=("Microsoft YaHei UI", 18, "bold"), bg=self.colors["panel_bg"], fg=self.colors["gold"], wraplength=300)
         self.title_label.pack()
         self.title_label.bind("<Double-Button-1>", self._edit_title)
-        tk.Label(title_frame, text="(双击修改标题)", font=("Arial", 8), bg=self.colors["panel_bg"], fg="#666").pack(pady=2)
+        tk.Label(title_frame, text="(双击修改标题)", font=("Arial", 8), bg=self.colors["panel_bg"], fg=self.colors["text_muted"]).pack(pady=2)
 
-        tk.Label(left_sidebar, text="🏆 荣耀榜单", font=("Microsoft YaHei UI", 14), bg=self.colors["panel_bg"], fg="#EEE").pack(pady=(10, 5))
+        tk.Label(left_sidebar, text="🏆 荣耀榜单", font=("Microsoft YaHei UI", 14), bg=self.colors["panel_bg"], fg=self.colors["white"]).pack(pady=(10, 5))
 
         self.history_listbox = tk.Listbox(
-            left_sidebar,
-            bg="#4A0B0B",
-            fg="#FFEBD2",
-            font=("Microsoft YaHei UI", 12),
-            highlightthickness=0,
+            left_sidebar, 
+            bg="#7A1616", 
+            fg=self.colors["white"], 
+            font=("Microsoft YaHei UI", 12), 
+            highlightthickness=0, 
             borderwidth=0,
             activestyle="none",
         )
@@ -188,32 +193,18 @@ class WheelLotteryWindow(tk.Toplevel):
         # 状态区
         status_frame = tk.Frame(right_sidebar, bg=self.colors["panel_bg"], pady=30, padx=20)
         status_frame.pack(fill=tk.X)
-        tk.Label(status_frame, text="当前状态", bg=self.colors["panel_bg"], fg=self.colors["cyan"], font=("Microsoft YaHei UI", 10)).pack(anchor=tk.W)
+        tk.Label(status_frame, text="当前状态", bg=self.colors["panel_bg"], fg=self.colors["gold_deep"], font=("Microsoft YaHei UI", 10)).pack(anchor=tk.W)
         self.status_label = tk.Label(status_frame, textvariable=self.result_var, bg=self.colors["panel_bg"], fg=self.colors["gold"], font=("Microsoft YaHei UI", 16, "bold"), wraplength=300, justify=tk.LEFT)
         self.status_label.pack(anchor=tk.W, pady=(5, 0))
 
         # 本轮名单
-        tk.Label(
-            right_sidebar,
-            text="🎉 本轮中奖",
-            bg=self.colors["panel_bg"],
-            fg=self.colors["gold"],
-            font=("Microsoft YaHei UI", 12, "bold"),
-        ).pack(anchor=tk.W, padx=20, pady=(20, 5))
+        tk.Label(right_sidebar, text="🎉 本轮中奖", bg=self.colors["panel_bg"], fg=self.colors["gold"], font=("Microsoft YaHei UI", 12, "bold")).pack(anchor=tk.W, padx=20, pady=(20, 5))
         
-        list_frame = tk.Frame(right_sidebar, bg="#6B1111", padx=1, pady=1)
+        list_frame = tk.Frame(right_sidebar, bg=self.colors["panel_border"], padx=1, pady=1) 
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
         
-        scrollbar = tk.Scrollbar(list_frame, orient="vertical", bg="#6B1111")
-        self.winner_listbox = tk.Listbox(
-            list_frame,
-            bg="#2E0000",
-            fg="#FFF1C1",
-            font=("Microsoft YaHei UI", 13),
-            highlightthickness=0,
-            borderwidth=0,
-            yscrollcommand=scrollbar.set,
-        )
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical", bg=self.colors["panel_bg"])
+        self.winner_listbox = tk.Listbox(list_frame, bg="#7A1616", fg=self.colors["white"], font=("Microsoft YaHei UI", 13), highlightthickness=0, borderwidth=0, yscrollcommand=scrollbar.set)
         scrollbar.config(command=self.winner_listbox.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.winner_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -222,45 +213,21 @@ class WheelLotteryWindow(tk.Toplevel):
         ctrl_frame = tk.Frame(right_sidebar, bg=self.colors["panel_bg"], padx=20, pady=30)
         ctrl_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
-        tk.Label(ctrl_frame, text="选择奖项:", bg=self.colors["panel_bg"], fg="#AAA").pack(anchor=tk.W)
+        tk.Label(ctrl_frame, text="选择奖项:", bg=self.colors["panel_bg"], fg=self.colors["text_muted"]).pack(anchor=tk.W)
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure(
-            "TCombobox",
-            fieldbackground="#4A0B0B",
-            background="#6B1111",
-            foreground="#FFEBD2",
-            arrowcolor="white",
-            font=("Microsoft YaHei UI", 12),
-        )
+        style.configure("TCombobox", fieldbackground="#7A1616", background="#8B1A1A", foreground=self.colors["white"], arrowcolor=self.colors["white"], font=("Microsoft YaHei UI", 12))
         
         self.prize_combo = ttk.Combobox(ctrl_frame, textvariable=self.prize_var, state="readonly", font=("Microsoft YaHei UI", 12))
         self.prize_combo.pack(fill=tk.X, pady=(2, 15), ipady=5)
         self.prize_combo.bind("<<ComboboxSelected>>", self._handle_prize_change)
 
-        self.action_btn = tk.Button(
-            ctrl_frame,
-            text="按住蓄力 / 点击开始",
-            bg=self.colors["gold"],
-            fg="#3C0707",
-            font=("Microsoft YaHei UI", 16, "bold"),
-            relief="flat",
-            cursor="hand2",
-        )
+        self.action_btn = tk.Button(ctrl_frame, text="按住蓄力 / 点击开始", bg=self.colors["gold"], fg="#5C1010", font=("Microsoft YaHei UI", 16, "bold"), relief="flat", cursor="hand2")
         self.action_btn.pack(fill=tk.X, pady=(0, 10), ipady=10)
         self.action_btn.bind("<ButtonPress-1>", self._on_btn_down)
         self.action_btn.bind("<ButtonRelease-1>", self._on_btn_up)
         
-        self.reset_btn = tk.Button(
-            ctrl_frame,
-            text="⟳ 重置名单 (清空队列)",
-            command=self._prepare_wheel,
-            bg="#6B1111",
-            fg="#FFF",
-            font=("Microsoft YaHei UI", 10),
-            relief="flat",
-            cursor="hand2",
-        )
+        self.reset_btn = tk.Button(ctrl_frame, text="⟳ 重置名单 (清空队列)", command=self._prepare_wheel, bg=self.colors["panel_border"], fg=self.colors["white"], font=("Microsoft YaHei UI", 10), relief="flat", cursor="hand2")
         self.reset_btn.pack(fill=tk.X)
 
         # ================= 中间画布 =================
@@ -386,6 +353,8 @@ class WheelLotteryWindow(tk.Toplevel):
             return
         if self.phase == "removing":
             return
+        if self.phase == "announcing":
+            return
         if self.phase == "prize_summary":
             self._confirm_prize_result()
             return
@@ -464,14 +433,16 @@ class WheelLotteryWindow(tk.Toplevel):
         for item in self.excluded_ids:
             if hasattr(item, 'person_id'): clean_excluded_ids.add(str(item.person_id))
             else: clean_excluded_ids.add(str(item))
-        already_won_ids = {str(winner["person_id"]) for winner in self.lottery_state.get("winners", [])}
-        clean_excluded_ids |= already_won_ids
+        if prize.exclude_previous_winners:
+            already_won_ids = {str(winner["person_id"]) for winner in self.lottery_state.get("winners", [])}
+            clean_excluded_ids |= already_won_ids
 
         remaining = remaining_slots(prize, self.lottery_state)
         if remaining <= 0:
             return
 
         preview_state = copy.deepcopy(self.lottery_state)
+        # Bug2: 一次性抽完当前奖项剩余名额，进入自动连抽队列
         winners = draw_prize(prize, self.people, preview_state, self.global_must_win, clean_excluded_ids)
 
         if not winners:
@@ -509,13 +480,15 @@ class WheelLotteryWindow(tk.Toplevel):
 
         prize_must_win_set = set(prize.must_win_ids)
         excluded_must_win = self.global_must_win - prize_must_win_set if prize.exclude_must_win else set()
-        previous_winners_set = {str(w["person_id"]) for w in self.lottery_state["winners"]}
+        prize_state = self.lottery_state.get("prizes", {}).get(prize_id, {"winners": []})
+        existing_prize_winners = {str(pid) for pid in prize_state.get("winners", [])}
+        previous_winners_set = {str(w["person_id"]) for w in self.lottery_state["winners"]} if prize.exclude_previous_winners else set()
         clean_excluded_ids = set()
         for item in self.excluded_ids:
             if hasattr(item, 'person_id'): clean_excluded_ids.add(str(item.person_id))
             else: clean_excluded_ids.add(str(item))
 
-        blacklist = clean_excluded_ids | excluded_must_win | previous_winners_set
+        blacklist = clean_excluded_ids | excluded_must_win | previous_winners_set | existing_prize_winners
         
         eligible = []
         for p in self.people:
@@ -612,6 +585,11 @@ class WheelLotteryWindow(tk.Toplevel):
                 self.wheel_rotation = self.target_rotation 
                 self._handle_stop()
         
+        elif self.phase == "announcing":
+            if self.anim_frame % 5 == 0:
+                self._create_firework()
+            if not self.tts_playing:
+                self._begin_removal_after_announcement()
         elif self.phase == "auto_wait":
             if self.anim_frame % 5 == 0: self._create_firework()
             
@@ -685,7 +663,7 @@ class WheelLotteryWindow(tk.Toplevel):
         
         width = self.canvas.winfo_width()
         height = self.canvas.winfo_height()
-        self.canvas.create_rectangle(0, 0, width, height, fill=self.colors["summary_bg"], outline="")
+        self.canvas.create_rectangle(0, 0, width, height, fill=self.colors["bg_canvas"], outline="")
         
         self.canvas.create_text(width/2, 100, text="🏆 中奖总榜 🏆", font=("Microsoft YaHei UI", 36, "bold"), fill=self.colors["gold"])
 
@@ -727,7 +705,7 @@ class WheelLotteryWindow(tk.Toplevel):
                 y,
                 text=f"✨ {prize_name}",
                 font=("Microsoft YaHei UI", 18, "bold"),
-                fill=self.colors["cyan"],
+                fill=self.colors["gold_deep"],
                 anchor="n",
                 tags="summary_items",
             )
@@ -737,7 +715,7 @@ class WheelLotteryWindow(tk.Toplevel):
                 y + header_height,
                 text=names_text,
                 font=("Microsoft YaHei UI", 14),
-                fill="white",
+                fill=self.colors["white"],
                 anchor="n",
                 tags="summary_items",
             )
@@ -751,7 +729,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self.canvas.delete("all")
         width = self.canvas.winfo_width()
         height = self.canvas.winfo_height()
-        self.canvas.create_rectangle(0, 0, width, height, fill=self.colors["summary_bg"], outline="")
+        self.canvas.create_rectangle(0, 0, width, height, fill=self.colors["bg_canvas"], outline="")
 
         title_text = f"🎉 {prize.name} 中奖结果"
         self.canvas.create_text(width / 2, 90, text=title_text, font=("Microsoft YaHei UI", 32, "bold"), fill=self.colors["gold"])
@@ -762,7 +740,7 @@ class WheelLotteryWindow(tk.Toplevel):
         ]
         names = [winner.get("person_name", "未知") for winner in winners]
         if not names:
-            self.canvas.create_text(width / 2, height / 2, text="暂无中奖者", font=("Microsoft YaHei UI", 22, "bold"), fill="white")
+            self.canvas.create_text(width / 2, height / 2, text="暂无中奖者", font=("Microsoft YaHei UI", 22, "bold"), fill=self.colors["white"])
             return
 
         total = len(names)
@@ -784,7 +762,7 @@ class WheelLotteryWindow(tk.Toplevel):
                 start_y,
                 text=column_text,
                 font=("Microsoft YaHei UI", font_size, "bold"),
-                fill="white",
+                fill=self.colors["white"],
                 anchor="n",
                 justify=tk.LEFT,
             )
@@ -833,12 +811,11 @@ class WheelLotteryWindow(tk.Toplevel):
                 if selected_voice:
                     engine.setProperty('voice', selected_voice)
                 
-                engine.setProperty('rate', 160)
-                
-                engine.say("恭喜")
-                engine.say(f"工号 {person_id}")
-                engine.say(name)
-                engine.say(f"获得 {prize_label}！")
+                # Bug4: 工号+姓名需慢一点播报
+                engine.setProperty('rate', 150)
+                engine.say(f"恭喜 {person_id}")
+                engine.say(f"{name}")
+                engine.say(f"获得 {prize_label}")
                 engine.runAndWait()
             except:
                 pass
@@ -871,8 +848,10 @@ class WheelLotteryWindow(tk.Toplevel):
         except:
             prize_label = "奖品"
 
-        # 执行语音播报
+        # Bug3: 先播报，播报结束后再进入 removing 动画
         self._speak_winner("", winner_data.get("id", ""), winner_data.get("name", ""), prize_label)
+        self.pending_removal_data = winner_data
+        self.pending_removal_idx = winner_data.get("index", -1)
 
         remaining = 0
         current_prize = self._get_current_prize()
@@ -882,13 +861,10 @@ class WheelLotteryWindow(tk.Toplevel):
         if remaining <= 0 and not self.target_queue:
             post_removal_phase = "prize_summary"
         else:
-            post_removal_phase = "auto_wait"
-
-        self.pending_removal_data = {
-            "winner_data": winner_data,
-            "post_removal_phase": post_removal_phase,
-        }
-        self.phase = "announce"
+            self.post_removal_phase = "idle"
+            
+        self.phase = "announcing"
+        self.result_var.set("🎙️ 正在播报中奖结果...")
         self._update_btn_state()
 
     def _apply_winner_to_state(self, winner: dict[str, Any]) -> None:
@@ -1005,7 +981,7 @@ class WheelLotteryWindow(tk.Toplevel):
         cy = top_margin + radius 
         
         if not self.wheel_names:
-            self.canvas.create_text(cx, cy, text="暂无数据", fill="#555", font=("Microsoft YaHei UI", 20))
+            self.canvas.create_text(cx, cy, text="暂无数据", fill=self.colors["text_muted"], font=("Microsoft YaHei UI", 20))
             return
 
         total_names = len(self.wheel_names)
@@ -1054,17 +1030,9 @@ class WheelLotteryWindow(tk.Toplevel):
                 if total_names < 50: display_on_wheel = f"{item['name']}"
                 text_angle = mid_angle
                 if 90 < mid_angle < 270: text_angle += 180
-                self.canvas.create_text(tx, ty, text=display_on_wheel, font=("Microsoft YaHei UI", base_font_size, "bold"), fill="#1a1c29", angle=text_angle)
+                self.canvas.create_text(tx, ty, text=display_on_wheel, font=("Microsoft YaHei UI", base_font_size, "bold"), fill=self.colors["red_deep"], angle=text_angle)
 
-        self.canvas.create_oval(
-            cx - 70,
-            cy - 70,
-            cx + 70,
-            cy + 70,
-            fill="#FFF4E0",
-            outline=self.colors["gold"],
-            width=4,
-        )
+        self.canvas.create_oval(cx - 70, cy - 70, cx + 70, cy + 70, fill=self.colors["white"], outline=self.colors["gold"], width=4)
         
         center_text_big = "LUCKY"
         center_text_small = ""
@@ -1082,37 +1050,14 @@ class WheelLotteryWindow(tk.Toplevel):
             except Exception:
                 pass
         
-        self._draw_text_with_outline(
-            cx,
-            cy - 10,
-            center_text_big,
-            ("Microsoft YaHei UI", 24, "bold"),
-            self.colors["red"],
-            "white",
-            thickness=2,
-        )
-        self.canvas.create_text(
-            cx,
-            cy + 25,
-            text=center_text_small,
-            font=("Microsoft YaHei UI", 12, "bold"),
-            fill="#7A1B1B",
-        )
+        self._draw_text_with_outline(cx, cy - 10, center_text_big, ("Microsoft YaHei UI", 24, "bold"), self.colors["red"], "white", thickness=2)
+        self.canvas.create_text(cx, cy + 25, text=center_text_small, font=("Microsoft YaHei UI", 12, "bold"), fill=self.colors["text_muted"])
 
         self.canvas.create_polygon(cx, cy - radius + 50, cx - 15, cy - radius + 10, cx + 15, cy - radius + 10, fill=self.colors["red"], outline="white", width=2)
         
         if pointer_text_top:
             bg_rect_y = cy - radius - 80
-            self.canvas.create_rectangle(
-                cx - 250,
-                bg_rect_y,
-                cx + 250,
-                bg_rect_y + 60,
-                fill="#6B1111",
-                outline=self.colors["gold"],
-                width=2,
-                tags="overlay",
-            )
+            self.canvas.create_rectangle(cx - 250, bg_rect_y, cx + 250, bg_rect_y + 60, fill="#7A1616", outline=self.colors["gold_deep"], width=2, tags="overlay")
             self.canvas.create_text(cx, bg_rect_y + 30, text=pointer_text_top, font=("Microsoft YaHei UI", 24, "bold"), fill=self.colors["gold"], tags="overlay")
             self.canvas.tag_raise("overlay")
 
@@ -1124,7 +1069,7 @@ class WheelLotteryWindow(tk.Toplevel):
             bar_x = width - 60 
             bar_bottom_y = height - 50 
             
-            self.canvas.create_rectangle(bar_x, bar_bottom_y - bar_max_h, bar_x + bar_w, bar_bottom_y, outline="#333", width=2, fill="#111")
+            self.canvas.create_rectangle(bar_x, bar_bottom_y - bar_max_h, bar_x + bar_w, bar_bottom_y, outline=self.colors["panel_border"], width=2, fill=self.colors["red_deep"])
             
             fill_h = bar_max_h * display_energy
             if fill_h < 0: fill_h = 0
@@ -1132,14 +1077,14 @@ class WheelLotteryWindow(tk.Toplevel):
             
             if display_energy > 0.7: bar_color = self.colors["red"] 
             elif display_energy > 0.3: bar_color = self.colors["gold"]
-            else: bar_color = self.colors["cyan"]
+            else: bar_color = self.colors["gold_deep"]
             
             self.canvas.create_rectangle(bar_x, fill_top_y, bar_x + bar_w, bar_bottom_y, fill=bar_color, outline="")
             
             if self.phase == "charging":
                 self.canvas.create_text(bar_x - 15, fill_top_y, text=self.encouragement_text, fill="white", font=("Microsoft YaHei UI", 16, "bold"), anchor="e")
             
-            self.canvas.create_text(bar_x + bar_w/2, bar_bottom_y + 25, text="动能", fill="#888", font=("Microsoft YaHei UI", 9))
+            self.canvas.create_text(bar_x + bar_w/2, bar_bottom_y + 25, text="动能", fill=self.colors["text_muted"], font=("Microsoft YaHei UI", 9))
 
     def _get_current_prize(self):
         label = self.prize_var.get()
@@ -1150,6 +1095,9 @@ class WheelLotteryWindow(tk.Toplevel):
 
     def _has_next_prize(self) -> bool:
         return self._next_available_prize() is not None
+
+    def _all_prizes_complete(self) -> bool:
+        return all(remaining_slots(prize, self.lottery_state) <= 0 for prize in self.prizes)
 
     def _next_available_prize(self):
         current_prize = self._get_current_prize()
@@ -1223,6 +1171,12 @@ class WheelLotteryWindow(tk.Toplevel):
 
     def _confirm_prize_result(self) -> None:
         """点击确认结算：仅关闭统计画面，不自动跳转下一奖项"""
+        # Bug1: 若所有奖项名额都抽完，确认后直接进入总榜
+        if self._all_prizes_complete():
+            self.is_showing_prize_result = False
+            self._render_grand_summary()
+            self._update_btn_state()
+            return
         self.is_showing_prize_result = False
         # 此时才根据需要刷新一次列表，把刚才抽完的奖项标记为 0
         self._refresh_prize_options(hide_completed=False)
@@ -1237,19 +1191,21 @@ class WheelLotteryWindow(tk.Toplevel):
     def _update_btn_state(self):
         if self.phase == "prize_summary":
             if self._has_next_prize():
-                self.action_btn.config(text="确认并继续", bg=self.colors["cyan"], fg="#000")
+                self.action_btn.config(text="确认并继续", bg=self.colors["gold"], fg="#5C1010")
             else:
-                self.action_btn.config(text="确认并查看总榜", bg=self.colors["cyan"], fg="#000")
+                self.action_btn.config(text="确认并查看总榜", bg=self.colors["gold"], fg="#5C1010")
             self.prize_combo.config(state="readonly")
-        elif self.phase in ["charging", "spinning", "braking", "auto_wait", "removing", "announce"]:
-            label = "播报中..." if self.phase == "announce" else "STOP (点击暂停)"
-            self.action_btn.config(text=label, bg=self.colors["red"], fg="white")
+        elif self.phase == "announcing":
+            self.action_btn.config(text="🎙️ 播报中...", bg=self.colors["red_deep"], fg=self.colors["white"])
+            self.prize_combo.config(state="disabled")
+        elif self.phase in ["charging", "spinning", "braking", "auto_wait", "removing"]:
+            self.action_btn.config(text="STOP (点击暂停)", bg=self.colors["red"], fg=self.colors["white"])
             self.prize_combo.config(state="disabled") 
         elif self.phase == "wait_for_manual":
-             self.action_btn.config(text="继续 (长按蓄力)", bg="#666", fg="#FFF")
+             self.action_btn.config(text="继续 (长按蓄力)", bg=self.colors["panel_border"], fg=self.colors["white"])
              self.prize_combo.config(state="readonly") 
         else:
-            self.action_btn.config(text="按住蓄力 / 点击开始", bg=self.colors["gold"], fg="black")
+            self.action_btn.config(text="按住蓄力 / 点击开始", bg=self.colors["gold"], fg="#5C1010")
             self.prize_combo.config(state="readonly")
 
         if self.phase in ["idle", "wait_for_manual", "prize_summary"]:
@@ -1266,12 +1222,28 @@ class WheelLotteryWindow(tk.Toplevel):
         screen_y = root_y - (root_y % screen_h)
         return screen_x, screen_y, screen_w, screen_h
 
-    def _finalize_removal(self) -> None:
-        if 0 <= self.removing_idx < len(self.wheel_names):
-            self.wheel_names.pop(self.removing_idx)
-            self._rebuild_wheel_layout()
-        self.removing_idx = -1
-        self.removal_scale = 1.0
+    def _begin_removal_after_announcement(self) -> None:
+        """播报结束后进入 removing 动画或直接进入下一阶段。"""
+        winner_data = self.pending_removal_data
+        if not winner_data:
+            self._complete_post_removal_phase()
+            return
+        current_prize = self._get_current_prize()
+        should_remove = bool(current_prize and current_prize.exclude_previous_winners)
+        if should_remove:
+            self.removing_idx = self.pending_removal_idx
+            self.removal_scale = 1.0
+            self._spawn_removal_particles(winner_data)
+            self.phase = "removing"
+            self._update_btn_state()
+            return
+        # Bug3: 允许重复中奖时不从转盘移除
+        self.pending_removal_data = None
+        self.pending_removal_idx = -1
+        self._complete_post_removal_phase()
+
+    def _complete_post_removal_phase(self) -> None:
+        """统一处理 removing 结束后的阶段切换。"""
         if self.post_removal_phase == "prize_summary":
             self.phase = "prize_summary"
             self.is_showing_prize_result = True
@@ -1280,6 +1252,10 @@ class WheelLotteryWindow(tk.Toplevel):
                 self._render_prize_summary(current_prize)
             self.result_var.set("本奖项已完成，查看结果或进入下一轮")
         elif self.post_removal_phase == "auto_wait":
+            current_prize = self._get_current_prize()
+            if current_prize and not self.target_queue and remaining_slots(current_prize, self.lottery_state) > 0:
+                # Bug2: 若队列空但仍有名额，自动补齐连抽队列
+                self._start_draw_logic()
             self.phase = "auto_wait"
             self.auto_wait_start_time = time.monotonic()
             self.is_showing_prize_result = False
@@ -1291,6 +1267,16 @@ class WheelLotteryWindow(tk.Toplevel):
             self.is_showing_prize_result = False
         self.post_removal_phase = None
         self._update_btn_state()
+
+    def _finalize_removal(self) -> None:
+        if 0 <= self.removing_idx < len(self.wheel_names):
+            self.wheel_names.pop(self.removing_idx)
+            self._rebuild_wheel_layout()
+        self.pending_removal_data = None
+        self.pending_removal_idx = -1
+        self.removing_idx = -1
+        self.removal_scale = 1.0
+        self._complete_post_removal_phase()
 
     def _rebuild_wheel_layout(self) -> None:
         if self.wheel_names:
