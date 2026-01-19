@@ -111,6 +111,8 @@ class WheelLotteryWindow(tk.Toplevel):
         self.osc_omega = 12.0
         self.osc_zeta = 0.25
         self.osc_min_duration = 0.6
+        self.brake_start_time = 0.0
+        self.brake_start_rotation = 0.0
         self.decel_factor = 0.04    
         
         # 队列
@@ -632,19 +634,18 @@ class WheelLotteryWindow(tk.Toplevel):
                 self.wheel_rotation += self.current_speed
             else:
                 self.phase = "braking"
+                self.force_full_render = True
                 self._calculate_stop_path_by_time() 
 
         elif self.phase == "braking":
             display_energy = 0
             if self.brake_phase == "braking":
-                dist_remaining = self.target_rotation - self.wheel_rotation
-                # 使用平滑减速公式，防止突然跳变
-                if dist_remaining > 0.5:
-                    step = dist_remaining * 0.08 # 减速系数
-                    self.current_speed = max(0.2, step)
-                    self.wheel_rotation += self.current_speed
-                else:
-                    self.wheel_rotation = self.target_rotation
+                # 震荡物理(平滑刹车)：easeOutCubic 插值到过冲点
+                elapsed = current_time - self.brake_start_time
+                t = min(1.0, max(0.0, elapsed / max(self.brake_duration, 0.01)))
+                ease = 1.0 - (1.0 - t) ** 3
+                self.wheel_rotation = self.brake_start_rotation + (self.target_rotation - self.brake_start_rotation) * ease
+                if t >= 1.0:
                     # 震荡物理(overshoot+oscillating)：进入二阶阻尼振荡
                     self.brake_phase = "oscillating"
                     self.osc_start_time = current_time
@@ -737,6 +738,8 @@ class WheelLotteryWindow(tk.Toplevel):
         self.target_rotation = self.target_rotation_base + self.overshoot_angle
         self.decel_factor = 0.04
         self.brake_phase = "braking"
+        self.brake_start_time = time.monotonic()
+        self.brake_start_rotation = current_abs
 
     def _format_names_rows(self, names: list[str], per_row: int = 4) -> str:
         if not names:
@@ -1183,12 +1186,18 @@ class WheelLotteryWindow(tk.Toplevel):
             text_mode = "simple"
         else:
             text_mode = "full"
+        text_update_interval = 0.05 if self.phase == "braking" else self.text_update_interval
         should_update_text = text_mode != "off"
+        should_refresh_text = (
+            text_mode != self.text_render_mode
+            or force_full
+            or (now - self.last_text_render_time) >= text_update_interval
+        )
         if text_mode == "off":
             if self.text_render_mode != "off":
                 self.canvas.delete("text")
             self.text_render_mode = "off"
-        elif should_update_text:
+        elif should_update_text and should_refresh_text:
             self.canvas.delete("text")
             self.last_text_render_time = now
             self.text_render_mode = text_mode
@@ -1219,63 +1228,45 @@ class WheelLotteryWindow(tk.Toplevel):
             if dist_to_pointer < self.segment_angle / 2:
                 pointer_text_top = item["full_text"]
 
-            if should_update_text and text_mode != "off":
+            if should_update_text and should_refresh_text and text_mode != "off":
+                mid_angle_rad = item["angle_center_rad"] + rotation_rad
+                name_chars = item.get("name_chars", [item["name"]])
                 if text_mode == "simple":
-                    mid_angle_rad = item["angle_center_rad"] + rotation_rad
-                    text_radius = radius * 0.8
+                    name_chars = name_chars[:6]
+                base_radius = radius * 0.55
+                char_step = min(12.0, radius * 0.04)
+                text_angle = mid_angle
+                if 90 < mid_angle < 270:
+                    text_angle += 180
+                draw_outline = text_mode == "full" and total_names <= 120
+                for char_index, char in enumerate(name_chars):
+                    text_radius = base_radius + char_index * char_step
                     tx = cx + text_radius * math.cos(mid_angle_rad)
                     ty = cy - text_radius * math.sin(mid_angle_rad)
-                    display_on_wheel = "".join(item.get("name_chars", [item["name"]]))
-                    text_angle = mid_angle
-                    if 90 < mid_angle < 270:
-                        text_angle += 180
-                    self.canvas.create_text(
-                        tx,
-                        ty,
-                        text=display_on_wheel,
-                        font=("Microsoft YaHei UI", base_font_size, "bold"),
-                        fill=self.colors["white"],
-                        tags="text",
-                        justify=tk.CENTER,
-                        angle=text_angle,
-                    )
-                elif text_mode == "full":
-                    mid_angle_rad = item["angle_center_rad"] + rotation_rad
-                    name_chars = item.get("name_chars", [item["name"]])
-                    base_radius = radius * 0.55
-                    char_step = min(12.0, radius * 0.04)
-                    text_angle = mid_angle
-                    if 90 < mid_angle < 270:
-                        text_angle += 180
-                    draw_outline = total_names <= 120
-                    for char_index, char in enumerate(name_chars):
-                        text_radius = base_radius + char_index * char_step
-                        tx = cx + text_radius * math.cos(mid_angle_rad)
-                        ty = cy - text_radius * math.sin(mid_angle_rad)
-                        if draw_outline:
-                            self._draw_text_with_outline(
-                                tx,
-                                ty,
-                                char,
-                                ("Microsoft YaHei UI", base_font_size, "bold"),
-                                text_color=self.colors["white"],
-                                outline_color=self.colors["red_deep"],
-                                thickness=1,
-                                tags="text",
-                                justify=tk.CENTER,
-                                angle=text_angle,
-                            )
-                        else:
-                            self.canvas.create_text(
-                                tx,
-                                ty,
-                                text=char,
-                                font=("Microsoft YaHei UI", base_font_size, "bold"),
-                                fill=self.colors["white"],
-                                tags="text",
-                                justify=tk.CENTER,
-                                angle=text_angle,
-                            )
+                    if draw_outline:
+                        self._draw_text_with_outline(
+                            tx,
+                            ty,
+                            char,
+                            ("Microsoft YaHei UI", base_font_size, "bold"),
+                            text_color=self.colors["white"],
+                            outline_color=self.colors["red_deep"],
+                            thickness=1,
+                            tags="text",
+                            justify=tk.CENTER,
+                            angle=text_angle,
+                        )
+                    else:
+                        self.canvas.create_text(
+                            tx,
+                            ty,
+                            text=char,
+                            font=("Microsoft YaHei UI", base_font_size, "bold"),
+                            fill=self.colors["white"],
+                            tags="text",
+                            justify=tk.CENTER,
+                            angle=text_angle,
+                        )
 
         self.canvas.create_oval(
             cx - 70,
