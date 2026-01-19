@@ -108,6 +108,7 @@ class WheelLotteryWindow(tk.Toplevel):
         self.removal_scale = 1.0
         self.post_removal_phase: str | None = None
         self.is_showing_prize_result = False
+        self.tts_playing = False
         self.removal_particles: list[dict[str, Any]] = []
         
         # 视觉特效
@@ -337,6 +338,8 @@ class WheelLotteryWindow(tk.Toplevel):
 
     # --- 输入控制 ---
     def _on_input_down(self):
+        if self.tts_playing:
+            return
         if self.phase == "summary":
             return
         if self.phase == "removing":
@@ -570,7 +573,9 @@ class WheelLotteryWindow(tk.Toplevel):
         elif self.phase == "auto_wait":
             if self.anim_frame % 5 == 0: self._create_firework()
             
-            if current_time - self.auto_wait_start_time > self.auto_wait_duration:
+            if self.tts_playing:
+                self.auto_wait_start_time = current_time
+            elif current_time - self.auto_wait_start_time > self.auto_wait_duration:
                 if self.target_queue:
                     self.phase = "spinning"
                     self._init_time_physics(self.locked_charge)
@@ -614,6 +619,14 @@ class WheelLotteryWindow(tk.Toplevel):
         self.target_rotation = current_abs + rotation_needed + extra_spins
         self.decel_factor = 0.04 
 
+    def _format_names_rows(self, names: list[str], per_row: int = 4) -> str:
+        if not names:
+            return ""
+        rows = []
+        for i in range(0, len(names), per_row):
+            rows.append("  ".join(names[i:i + per_row]))
+        return "\n".join(rows)
+
     def _render_grand_summary(self):
         self.phase = "summary"
         self.result_var.set("🎉 所有奖项抽取完毕！")
@@ -635,12 +648,15 @@ class WheelLotteryWindow(tk.Toplevel):
             grouped[p_name].append(w.get('person_name'))
 
         ordered_prizes = []
+        seen_prize_names = set()
         for prize in self.prizes:
-            if prize.name in grouped:
+            if prize.name in grouped and prize.name not in seen_prize_names:
                 ordered_prizes.append((prize.name, grouped[prize.name]))
+                seen_prize_names.add(prize.name)
         for prize_name, names in grouped.items():
-            if prize_name not in {item[0] for item in ordered_prizes}:
+            if prize_name not in seen_prize_names:
                 ordered_prizes.append((prize_name, names))
+                seen_prize_names.add(prize_name)
 
         columns = 3
         column_width = width / columns
@@ -664,7 +680,7 @@ class WheelLotteryWindow(tk.Toplevel):
                 anchor="n",
                 tags="summary_items",
             )
-            names_text = "\n".join(names) if names else "暂无"
+            names_text = self._format_names_rows(names) if names else "暂无"
             self.canvas.create_text(
                 x,
                 y + header_height,
@@ -674,7 +690,7 @@ class WheelLotteryWindow(tk.Toplevel):
                 anchor="n",
                 tags="summary_items",
             )
-            names_lines = max(1, len(names))
+            names_lines = max(1, len(names_text.splitlines()))
             block_height = header_height + names_lines * line_height + block_gap
             column_heights[col] += block_height
 
@@ -743,9 +759,14 @@ class WheelLotteryWindow(tk.Toplevel):
 
         self.summary_scroll_after_id = self.after(40, _tick)
 
-    def _speak_winner(self, text):
+    def _speak_winner(self, department: str, person_id: str, name: str, prize_label: str) -> None:
         if not TTS_AVAILABLE:
             return
+        if not department and not person_id and not name:
+            return
+        if self.tts_playing:
+            return
+        self.tts_playing = True
 
         def _speak():
             try:
@@ -758,10 +779,20 @@ class WheelLotteryWindow(tk.Toplevel):
                         engine.setProperty('voice', voice_id)
                         break
                 engine.setProperty('rate', 170)
-                engine.say(text)
-                engine.runAndWait()
+                if department:
+                    engine.say(department)
+                    engine.runAndWait()
+                    time.sleep(1.5)
+                detail_text = " ".join(part for part in [person_id, name] if part)
+                if prize_label:
+                    detail_text = f"{detail_text} 获得 {prize_label}"
+                if detail_text.strip():
+                    engine.say(detail_text.strip())
+                    engine.runAndWait()
             except Exception:
                 pass
+            finally:
+                self.tts_playing = False
 
         threading.Thread(target=_speak, daemon=True).start()
 
@@ -789,9 +820,11 @@ class WheelLotteryWindow(tk.Toplevel):
             
         self.result_var.set(f"恭喜 {winner_data['name']} 获得 {prize_label}！")
         
-        parts = info.split(' ')
-        speak_text = f"恭喜 {parts[-1]} 获得 {prize_label}"
-        self._speak_winner(speak_text)
+        parts = info.split()
+        name = winner_data.get("name", "")
+        person_id = winner_data.get("id", "")
+        department = " ".join(parts[:-2]) if len(parts) >= 3 else ""
+        self._speak_winner(str(department), str(person_id), str(name), prize_label)
         self._refresh_history_list() 
 
         self.removing_idx = winner_data.get("index", -1)
