@@ -103,7 +103,10 @@ class WheelWindowPrize:
             if remaining > 0:
                 self.result_var.set("准备下一轮抽奖...")
                 self.phase = "idle"
-                if not self.space_held:
+                if not self.wheel_names:
+                    self._prepare_wheel()
+                self._start_draw_logic()
+                if not self.target_queue:
                     return False
             else:
                 self.result_var.set("当前奖项已抽完")
