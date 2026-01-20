@@ -391,6 +391,12 @@ def draw_prize(
             eligible_prizes = [item for item in prizes if not item.exclude_must_win]
             total_remaining_slots = sum(remaining_slots(item, state) for item in eligible_prizes)
             remaining_slots_after = total_remaining_slots - remaining
+            existing_applicable_total = sum(
+                1
+                for entry in state["winners"]
+                if prize_lookup.get(entry["prize_id"])
+                and not prize_lookup[entry["prize_id"]].exclude_must_win
+            )
             existing_excluded_total = sum(
                 1
                 for entry in state["winners"]
@@ -442,6 +448,8 @@ def draw_prize(
                 len(excluded_pool),
             )
             min_excluded_allowed = min_needed_in_current
+            if existing_applicable_total == 0 and non_excluded_pool and min_excluded_allowed < remaining:
+                max_excluded_allowed = min(max_excluded_allowed, remaining - 1)
             if min_excluded_allowed > max_excluded_allowed:
                 raise ValueError("候选人不足，无法满足排除名单中奖人数范围。")
             excluded_count = (
