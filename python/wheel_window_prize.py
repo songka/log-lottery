@@ -103,7 +103,10 @@ class WheelWindowPrize:
             if remaining > 0:
                 self.result_var.set("准备下一轮抽奖...")
                 self.phase = "idle"
-                if not self.space_held:
+                if not self.wheel_names:
+                    self._prepare_wheel()
+                self._start_draw_logic()
+                if not self.target_queue:
                     return False
             else:
                 self.result_var.set("当前奖项已抽完")
@@ -115,6 +118,8 @@ class WheelWindowPrize:
     def _confirm_prize_result(self) -> None:
         """点击确认结算：仅关闭统计画面，不自动跳转下一奖项"""
         # Bug1: 若所有奖项名额都抽完，确认后直接进入总榜
+        # 修改：点击确认时清理中奖结果页面的画面元素
+        self.canvas.delete("prize_summary")
         if self._all_prizes_complete():
             self.is_showing_prize_result = False
             self._render_grand_summary()
