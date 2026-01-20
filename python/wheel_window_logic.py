@@ -65,6 +65,7 @@ class WheelWindowLogic:
             self.space_held = False
             self.phase = "spinning"
             self.is_auto_playing = True 
+            self._reset_round_display()
             
             # --- 核心：时间物理参数初始化 ---
             self.locked_charge = self.charge_power 
@@ -290,12 +291,14 @@ class WheelWindowLogic:
                 self.auto_wait_start_time = current_time
             elif current_time - self.auto_wait_start_time > self.auto_wait_duration:
                 if self.target_queue:
+                    self._reset_round_display()
                     self.phase = "spinning"
                     self._init_time_physics(self.locked_charge)
                     self.result_var.set("自动连抽中...")
                     self._update_btn_state()
                 else:
                     if self._ensure_auto_queue():
+                        self._reset_round_display()
                         self.phase = "spinning"
                         self._init_time_physics(self.locked_charge)
                         self.result_var.set("自动连抽中...")
@@ -303,7 +306,7 @@ class WheelWindowLogic:
                     else:
                         self._show_prize_summary_if_complete()
         elif self.phase == "removing":
-            self.removal_scale -= 0.08
+            self.removal_scale -= 0.04
             if self.removal_scale <= 0:
                 self._finalize_removal()
             self._animate_removal_particles()
@@ -343,6 +346,11 @@ class WheelWindowLogic:
         
         self.target_rotation = current_abs + rotation_needed + extra_spins
         self.decel_factor = 0.04 
+
+    def _reset_round_display(self) -> None:
+        self.winner_listbox.delete(0, tk.END)
+        self.revealed_winners = []
+        self.canvas.delete("fx_firework")
 
     def _speak_winner(self, department: str, person_id: str, name: str, prize_label: str) -> None:
         if not TTS_AVAILABLE:
@@ -480,7 +488,13 @@ class WheelWindowLogic:
 
     def _finalize_removal(self) -> None:
         if 0 <= self.removing_idx < len(self.wheel_names):
-            self.wheel_names.pop(self.removing_idx)
+            removed_item = self.wheel_names.pop(self.removing_idx)
+            arc_id = removed_item.get("arc_id")
+            if arc_id:
+                self.canvas.delete(arc_id)
+            text_ids = removed_item.get("text_ids") or []
+            for t_id in text_ids:
+                self.canvas.delete(t_id)
             self._rebuild_wheel_layout()
         self.pending_removal_data = None
         self.pending_removal_idx = -1

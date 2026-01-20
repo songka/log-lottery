@@ -198,13 +198,7 @@ class WheelWindowRender:
             mid_angle = (item["angle_center"] + rotation_mod) % 360
             dist_to_pointer = self._angle_distance(mid_angle, 90)
             if dist_to_pointer < self.segment_angle / 2:
-                # 2. 关键：只有在“非高速旋转”阶段，才把名字赋给 pointer_text_top
-                if self.phase not in ["charging", "spinning"]:
-                    pointer_text_top = item["full_text"]
-                else:
-                    # 3. 如果正在旋转/加速，强制让 pointer_text_top 保持为空
-                    # 这样就能清除上一轮留下的名字
-                    pointer_text_top = ""
+                pointer_text_top = item["full_text"]
                 
 
             # D. 绘制或更新 名字 (Text)
@@ -240,6 +234,9 @@ class WheelWindowRender:
 
             # 更新所有字符的位置和角度
             for char_index, (char, t_id) in enumerate(zip(name_chars, text_ids)):
+                if self.phase == "removing" and item["index"] == self.removing_idx and segment_extent <= 0.1:
+                    self.canvas.itemconfigure(t_id, state="hidden")
+                    continue
                 text_radius = base_radius + char_index * char_step
                 tx = cx + text_radius * math.cos(mid_angle_rad)
                 ty = cy - text_radius * math.sin(mid_angle_rad)
@@ -250,7 +247,8 @@ class WheelWindowRender:
                         t_id, 
                         angle=text_angle, 
                         text=char, # 确保文字内容正确
-                        font=("Microsoft YaHei UI", base_font_size, "bold")
+                        font=("Microsoft YaHei UI", base_font_size, "bold"),
+                        state="normal",
                     )
                 except Exception:
                     item["text_ids"] = None # ID失效，下帧重建
