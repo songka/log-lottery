@@ -77,6 +77,7 @@ class WheelWindowRender:
             "prize_summary",
         )
 
+# ---------------- 渲染 (修复版) ----------------
     def _render_wheel(self, display_energy=0.0, force_full: bool = False, now: float | None = None) -> None:
         if self.phase in ["summary", "prize_summary"]: return 
 
@@ -87,12 +88,14 @@ class WheelWindowRender:
         if width <= 1 or height <= 1:
             return
 
+        # 检测画布尺寸变化，如果变化则强制全量重绘
         size_changed = (width, height) != self.last_canvas_size
         if size_changed:
             self.last_canvas_size = (width, height)
             force_full = True
 
-        # 性能优化(分层tag)：仅清理必要层级
+        # --- 1. 背景层 (BG) ---
+        # 仅在需要时重绘背景，减少开销
         if force_full or now - self.last_bg_render_time >= self.bg_update_interval:
             self.canvas.delete("bg")
             for p in self.bg_particles:
@@ -100,20 +103,23 @@ class WheelWindowRender:
                 py = p["y"] * height
                 r = p["size"]
                 self.canvas.create_oval(
-                    px,
-                    py,
-                    px + r,
-                    py + r,
-                    fill=p["color"],
-                    outline="",
-                    tags="bg",
+                    px, py, px + r, py + r,
+                    fill=p["color"], outline="", tags="bg",
                 )
             self.last_bg_render_time = now
 
-        self.canvas.delete("wheel")
-        self.canvas.delete("overlay")
-        self.canvas.delete("fx_particles")
-        
+        # 如果是强制重绘（如Resize），清理所有动态元素并重置ID缓存
+        if force_full:
+            self.canvas.delete("wheel")
+            self.canvas.delete("text")
+            self.canvas.delete("overlay")
+            self.canvas.delete("fx_particles")
+            # 清除 Python 对象中存储的 ID，确保重新创建
+            for item in self.wheel_names:
+                item["arc_id"] = None
+                item["text_ids"] = None
+
+        # --- 计算中心点 ---
         top_margin = 150
         max_diameter = min(width - 40, height - top_margin - 50)
         radius = max_diameter / 2
@@ -121,19 +127,16 @@ class WheelWindowRender:
         cy = top_margin + radius 
         
         if not self.wheel_names:
+            self.canvas.delete("text") # 清理旧文本
             self.canvas.create_text(
-                cx,
-                cy,
-                text="暂无数据",
-                fill=self.colors["text_muted"],
-                font=("Microsoft YaHei UI", 20),
-                tags="text",
+                cx, cy, text="暂无数据", fill=self.colors["text_muted"],
+                font=("Microsoft YaHei UI", 20), tags="text",
             )
             self.last_render_time = now
             return
 
+        # --- 字体大小计算 ---
         total_names = len(self.wheel_names)
-        
         if total_names >= 160: base_font_size = 6
         elif total_names >= 120: base_font_size = 8
         elif total_names >= 100: base_font_size = 10
@@ -143,134 +146,131 @@ class WheelWindowRender:
         rotation_mod = self.wheel_rotation % 360
         rotation_rad = math.radians(rotation_mod)
         pointer_text_top = ""
-        is_animating = self.phase in ["charging", "spinning", "removing"]
-        text_mode = "simple" if is_animating else "full"
-        should_update_text = True
-        switch_text_mode = text_mode != self.text_render_mode
-        should_refresh_text = (
-            text_mode != self.text_render_mode
-            or force_full
-            or is_animating
-            or (now - self.last_text_render_time) >= self.text_update_interval
-        )
-        if should_refresh_text and (switch_text_mode or force_full or not is_animating):
-            self.canvas.delete("text")
-            for item in self.wheel_names:
-                item.pop("text_ids", None)
-            self.last_text_render_time = now
-            self.text_render_mode = text_mode
-
+        
+        # --- 2. 绘制/更新 转盘扇区 (Wheel) 和 名字 (Text) ---
+        # 关键修改：不再每帧 delete("wheel") 和 delete("text")
+        
         for item in self.wheel_names:
+            # A. 计算角度
             segment_extent = self.segment_angle
             segment_half = self.segment_angle / 2
+            
+            # 处理“移除中”的动画效果
             if self.phase == "removing" and item["index"] == self.removing_idx:
                 segment_extent = self.segment_angle * max(0.0, self.removal_scale)
                 segment_half = segment_extent / 2
-            start = (item["angle_center"] - segment_half + rotation_mod) % 360
-            if segment_extent > 0.1:
-                self.canvas.create_arc(
-                    cx - radius,
-                    cy - radius,
-                    cx + radius,
-                    cy + radius,
-                    start=start,
-                    extent=segment_extent,
-                    fill=item["color"],
-                    outline=item["color"],
-                    width=1,
-                    tags="wheel",
-                )
             
+            start_angle = (item["angle_center"] - segment_half + rotation_mod) % 360
+            
+            # B. 绘制或更新扇区 (Arc)
+            arc_id = item.get("arc_id")
+            if not arc_id:
+                # 如果ID不存在（第一次渲染或被force_full清除），则创建
+                if segment_extent > 0.1:
+                    item["arc_id"] = self.canvas.create_arc(
+                        cx - radius, cy - radius, cx + radius, cy + radius,
+                        start=start_angle, extent=segment_extent,
+                        fill=item["color"], outline=item["color"], width=1,
+                        tags="wheel"
+                    )
+            else:
+                # 如果ID存在，直接更新属性（消除闪烁的关键）
+                if segment_extent > 0.1:
+                    try:
+                        self.canvas.itemconfigure(
+                            arc_id, 
+                            start=start_angle, 
+                            extent=segment_extent,
+                            state="normal" # 确保可见
+                        )
+                        self.canvas.coords(
+                            arc_id, 
+                            cx - radius, cy - radius, cx + radius, cy + radius
+                        )
+                    except Exception:
+                        # 如果canvas被意外清空导致ID失效，重新创建
+                        item["arc_id"] = None 
+                else:
+                    # 扇区太小或隐藏时
+                    self.canvas.itemconfigure(arc_id, state="hidden")
+
+            # C. 指针检测逻辑
             mid_angle = (item["angle_center"] + rotation_mod) % 360
             dist_to_pointer = self._angle_distance(mid_angle, 90)
             if dist_to_pointer < self.segment_angle / 2:
-                pointer_text_top = item["full_text"]
-
-            if should_update_text and should_refresh_text:
-                mid_angle_rad = item["angle_center_rad"] + rotation_rad
-                name_chars = item.get("name_chars", [item["name"]])
-                base_radius = radius * 0.82
-                char_step = min(12.0, radius * 0.04)
-                text_angle = mid_angle
-                if 90 < mid_angle < 270:
-                    text_angle += 180
-                draw_outline = text_mode == "full" and total_names <= 120
-                if text_mode == "simple":
-                    text_ids = item.get("text_ids")
-                    if text_ids and len(text_ids) != len(name_chars):
-                        for text_id in text_ids:
-                            self.canvas.delete(text_id)
-                        text_ids = None
-                    if not text_ids:
-                        text_ids = []
-                        for _ in name_chars:
-                            text_ids.append(
-                                self.canvas.create_text(
-                                    0,
-                                    0,
-                                    text="",
-                                    font=("Microsoft YaHei UI", base_font_size, "bold"),
-                                    fill=self.colors["white"],
-                                    tags="text",
-                                    justify=tk.CENTER,
-                                    angle=text_angle,
-                                )
-                            )
-                        item["text_ids"] = text_ids
-                    for char_index, (char, text_id) in enumerate(zip(name_chars, text_ids)):
-                        text_radius = base_radius + char_index * char_step
-                        tx = cx + text_radius * math.cos(mid_angle_rad)
-                        ty = cy - text_radius * math.sin(mid_angle_rad)
-                        self.canvas.coords(text_id, tx, ty)
-                        self.canvas.itemconfigure(
-                            text_id,
-                            text=char,
-                            angle=text_angle,
-                            font=("Microsoft YaHei UI", base_font_size, "bold"),
-                            fill=self.colors["white"],
-                            justify=tk.CENTER,
-                        )
+                # 2. 关键：只有在“非高速旋转”阶段，才把名字赋给 pointer_text_top
+                if self.phase not in ["charging", "spinning"]:
+                    pointer_text_top = item["full_text"]
                 else:
-                    for char_index, char in enumerate(name_chars):
-                        text_radius = base_radius + char_index * char_step
-                        tx = cx + text_radius * math.cos(mid_angle_rad)
-                        ty = cy - text_radius * math.sin(mid_angle_rad)
-                        if draw_outline:
-                            self._draw_text_with_outline(
-                                tx,
-                                ty,
-                                char,
-                                ("Microsoft YaHei UI", base_font_size, "bold"),
-                                text_color=self.colors["white"],
-                                outline_color=self.colors["red_deep"],
-                                thickness=1,
-                                tags="text",
-                                justify=tk.CENTER,
-                                angle=text_angle,
-                            )
-                        else:
-                            self.canvas.create_text(
-                                tx,
-                                ty,
-                                text=char,
-                                font=("Microsoft YaHei UI", base_font_size, "bold"),
-                                fill=self.colors["white"],
-                                tags="text",
-                                justify=tk.CENTER,
-                                angle=text_angle,
-                            )
+                    # 3. 如果正在旋转/加速，强制让 pointer_text_top 保持为空
+                    # 这样就能清除上一轮留下的名字
+                    pointer_text_top = ""
+                
 
+            # D. 绘制或更新 名字 (Text)
+            # 始终使用高性能模式：每个字符一个对象，更新位置而不是删除重建
+            mid_angle_rad = item["angle_center_rad"] + rotation_rad
+            name_chars = item.get("name_chars", [item["name"]])
+            base_radius = radius * 0.82
+            char_step = min(12.0, radius * 0.04)
+            
+            # 文字角度修正，防止倒立
+            text_angle = mid_angle
+            if 90 < mid_angle < 270:
+                text_angle += 180
+            
+            text_ids = item.get("text_ids")
+            
+            # 如果字符数量变化或ID丢失，需要重建
+            if not text_ids or len(text_ids) != len(name_chars):
+                # 清理旧的（如果有）
+                if text_ids:
+                    for tid in text_ids: self.canvas.delete(tid)
+                
+                new_ids = []
+                for char in name_chars:
+                    new_ids.append(self.canvas.create_text(
+                        0, 0, text=char,
+                        font=("Microsoft YaHei UI", base_font_size, "bold"),
+                        fill=self.colors["white"],
+                        tags="text", justify=tk.CENTER
+                    ))
+                item["text_ids"] = new_ids
+                text_ids = new_ids
+
+            # 更新所有字符的位置和角度
+            for char_index, (char, t_id) in enumerate(zip(name_chars, text_ids)):
+                text_radius = base_radius + char_index * char_step
+                tx = cx + text_radius * math.cos(mid_angle_rad)
+                ty = cy - text_radius * math.sin(mid_angle_rad)
+                
+                try:
+                    self.canvas.coords(t_id, tx, ty)
+                    self.canvas.itemconfigure(
+                        t_id, 
+                        angle=text_angle, 
+                        text=char, # 确保文字内容正确
+                        font=("Microsoft YaHei UI", base_font_size, "bold")
+                    )
+                except Exception:
+                    item["text_ids"] = None # ID失效，下帧重建
+
+        # 确保文字层在扇区层之上
+        self.canvas.tag_raise("text", "wheel")
+
+        # --- 3. 覆盖层 (Overlay) ---
+        # 覆盖层元素较少，可以使用删除重建的方式，或者也优化为 update
+        # 这里为了保险起见，覆盖层我们每帧重建（因为形状简单），但要确保在最上层
+        self.canvas.delete("overlay") 
+        
+        # 中心圆
         self.canvas.create_oval(
-            cx - 70,
-            cy - 70,
-            cx + 70,
-            cy + 70,
-            fill=self.colors["white"],
-            outline=self.colors["gold"],
-            width=4,
-            tags="overlay",
+            cx - 70, cy - 70, cx + 70, cy + 70,
+            fill=self.colors["white"], outline=self.colors["gold"],
+            width=4, tags="overlay",
         )
         
+        # 中心文字
         center_text_big = "LUCKY"
         center_text_small = ""
         prize_label = self.prize_var.get()
@@ -287,80 +287,60 @@ class WheelWindowRender:
             except Exception:
                 pass
         
-        self._draw_text_with_outline(
-            cx,
-            cy - 10,
-            center_text_big,
-            ("Microsoft YaHei UI", 24, "bold"),
-            self.colors["red"],
-            "white",
-            thickness=2,
-            tags="overlay",
+        # 使用普通 text 绘制中心文字（避免 _draw_text_with_outline 造成的性能负担）
+        self.canvas.create_text(
+            cx, cy - 10, text=center_text_big,
+            font=("Microsoft YaHei UI", 24, "bold"), fill=self.colors["red"],
+            tags="overlay"
         )
         self.canvas.create_text(
-            cx,
-            cy + 25,
-            text=center_text_small,
-            font=("Microsoft YaHei UI", 12, "bold"),
-            fill=self.colors["text_muted"],
+            cx, cy + 25, text=center_text_small,
+            font=("Microsoft YaHei UI", 12, "bold"), fill=self.colors["text_muted"],
             tags="overlay",
         )
 
+        # 顶部指针
         self.canvas.create_polygon(
-            cx,
-            cy - radius + 50,
-            cx - 15,
-            cy - radius + 10,
-            cx + 15,
-            cy - radius + 10,
-            fill=self.colors["red"],
-            outline="white",
-            width=2,
+            cx, cy - radius + 50,
+            cx - 15, cy - radius + 10,
+            cx + 15, cy - radius + 10,
+            fill=self.colors["red"], outline="white", width=2,
             tags="overlay",
         )
         
+        # 选中人名高亮框
         if pointer_text_top:
             bg_rect_y = cy - radius - 80
             self.canvas.create_rectangle(
-                cx - 250,
-                bg_rect_y,
-                cx + 250,
-                bg_rect_y + 60,
-                fill="#7A1616",
-                outline=self.colors["gold_deep"],
-                width=2,
+                cx - 250, bg_rect_y, cx + 250, bg_rect_y + 60,
+                fill="#7A1616", outline=self.colors["gold_deep"], width=2,
                 tags="overlay",
             )
             self.canvas.create_text(
-                cx,
-                bg_rect_y + 30,
-                text=pointer_text_top,
-                font=("Microsoft YaHei UI", 24, "bold"),
-                fill=self.colors["gold"],
+                cx, bg_rect_y + 30, text=pointer_text_top,
+                font=("Microsoft YaHei UI", 24, "bold"), fill=self.colors["gold"],
                 tags="overlay",
             )
 
+        # 粒子特效更新 (保持原逻辑，只需确保不被删除)
         self._render_removal_particles()
 
+        # 能量条绘制
         if self.phase != "finished":
             bar_w = 40
             bar_max_h = 400
             bar_x = width - 60 
             bar_bottom_y = height - 50 
             
+            # 能量槽背景
             self.canvas.create_rectangle(
-                bar_x,
-                bar_bottom_y - bar_max_h,
-                bar_x + bar_w,
-                bar_bottom_y,
-                outline=self.colors["panel_border"],
-                width=2,
-                fill=self.colors["red_deep"],
-                tags="overlay",
+                bar_x, bar_bottom_y - bar_max_h, bar_x + bar_w, bar_bottom_y,
+                outline=self.colors["panel_border"], width=2,
+                fill=self.colors["red_deep"], tags="overlay",
             )
             
             fill_h = bar_max_h * display_energy
-            if fill_h < 0: fill_h = 0
+            fill_h = max(0, fill_h)
             fill_top_y = bar_bottom_y - fill_h
             
             if display_energy > 0.7: bar_color = self.colors["red"] 
@@ -368,36 +348,25 @@ class WheelWindowRender:
             else: bar_color = self.colors["gold_deep"]
             
             self.canvas.create_rectangle(
-                bar_x,
-                fill_top_y,
-                bar_x + bar_w,
-                bar_bottom_y,
-                fill=bar_color,
-                outline="",
-                tags="overlay",
+                bar_x, fill_top_y, bar_x + bar_w, bar_bottom_y,
+                fill=bar_color, outline="", tags="overlay",
             )
             
             if self.phase == "charging":
                 self.canvas.create_text(
-                    bar_x - 15,
-                    fill_top_y,
-                    text=self.encouragement_text,
-                    fill="white",
-                    font=("Microsoft YaHei UI", 16, "bold"),
-                    anchor="e",
-                    tags="overlay",
+                    bar_x - 15, fill_top_y, text=self.encouragement_text,
+                    fill="white", font=("Microsoft YaHei UI", 16, "bold"),
+                    anchor="e", tags="overlay",
                 )
             
             self.canvas.create_text(
-                bar_x + bar_w / 2,
-                bar_bottom_y + 25,
-                text="动能",
-                fill=self.colors["text_muted"],
-                font=("Microsoft YaHei UI", 9),
+                bar_x + bar_w / 2, bar_bottom_y + 25, text="动能",
+                fill=self.colors["text_muted"], font=("Microsoft YaHei UI", 9),
                 tags="overlay",
             )
+        
         self.last_render_time = now
-
+        
     def _format_names_rows(self, names: list[str], per_row: int = 4) -> str:
         if not names:
             return ""

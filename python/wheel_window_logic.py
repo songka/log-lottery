@@ -79,12 +79,12 @@ class WheelWindowLogic:
                 self._update_btn_state()
 
     def _init_time_physics(self, power):
-        self.spin_duration = 2.0 + (13.0 * power)
+        self.spin_duration = 1.0 + (4.0 * power)
         self.spin_start_time = time.monotonic()
         
-        base_brake = 5.0 + (5.0 * power)
-        random_flux = random.uniform(-2.0, 2.0)
-        self.brake_duration = max(3.0, base_brake + random_flux)
+        base_brake = 2.0 + (2.5 * power)
+        random_flux = random.uniform(-0.8, 0.8)
+        self.brake_duration = max(1.5, base_brake + random_flux)
         
         self.current_speed = 30.0
         self.brake_phase = "braking"
@@ -336,7 +336,7 @@ class WheelWindowLogic:
         current_mod = current_abs % 360
         rotation_needed = (desired_mod - current_mod) % 360
         
-        avg_speed = 10.0 
+        avg_speed = 6.0 
         estimated_dist = avg_speed * (self.brake_duration * 50) 
         
         extra_spins = math.ceil(estimated_dist / 360) * 360
