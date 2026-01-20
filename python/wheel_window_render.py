@@ -143,15 +143,20 @@ class WheelWindowRender:
         rotation_mod = self.wheel_rotation % 360
         rotation_rad = math.radians(rotation_mod)
         pointer_text_top = ""
-        text_mode = "full"
+        is_animating = self.phase in ["charging", "spinning", "removing"]
+        text_mode = "simple" if is_animating else "full"
         should_update_text = True
+        switch_text_mode = text_mode != self.text_render_mode
         should_refresh_text = (
             text_mode != self.text_render_mode
             or force_full
+            or is_animating
             or (now - self.last_text_render_time) >= self.text_update_interval
         )
-        if should_refresh_text:
+        if should_refresh_text and (switch_text_mode or force_full or not is_animating):
             self.canvas.delete("text")
+            for item in self.wheel_names:
+                item.pop("text_ids", None)
             self.last_text_render_time = now
             self.text_render_mode = text_mode
 
@@ -190,34 +195,70 @@ class WheelWindowRender:
                 if 90 < mid_angle < 270:
                     text_angle += 180
                 draw_outline = text_mode == "full" and total_names <= 120
-                for char_index, char in enumerate(name_chars):
-                    text_radius = base_radius + char_index * char_step
-                    tx = cx + text_radius * math.cos(mid_angle_rad)
-                    ty = cy - text_radius * math.sin(mid_angle_rad)
-                    if draw_outline:
-                        self._draw_text_with_outline(
-                            tx,
-                            ty,
-                            char,
-                            ("Microsoft YaHei UI", base_font_size, "bold"),
-                            text_color=self.colors["white"],
-                            outline_color=self.colors["red_deep"],
-                            thickness=1,
-                            tags="text",
-                            justify=tk.CENTER,
-                            angle=text_angle,
-                        )
-                    else:
-                        self.canvas.create_text(
-                            tx,
-                            ty,
+                if text_mode == "simple":
+                    text_ids = item.get("text_ids")
+                    if text_ids and len(text_ids) != len(name_chars):
+                        for text_id in text_ids:
+                            self.canvas.delete(text_id)
+                        text_ids = None
+                    if not text_ids:
+                        text_ids = []
+                        for _ in name_chars:
+                            text_ids.append(
+                                self.canvas.create_text(
+                                    0,
+                                    0,
+                                    text="",
+                                    font=("Microsoft YaHei UI", base_font_size, "bold"),
+                                    fill=self.colors["white"],
+                                    tags="text",
+                                    justify=tk.CENTER,
+                                    angle=text_angle,
+                                )
+                            )
+                        item["text_ids"] = text_ids
+                    for char_index, (char, text_id) in enumerate(zip(name_chars, text_ids)):
+                        text_radius = base_radius + char_index * char_step
+                        tx = cx + text_radius * math.cos(mid_angle_rad)
+                        ty = cy - text_radius * math.sin(mid_angle_rad)
+                        self.canvas.coords(text_id, tx, ty)
+                        self.canvas.itemconfigure(
+                            text_id,
                             text=char,
+                            angle=text_angle,
                             font=("Microsoft YaHei UI", base_font_size, "bold"),
                             fill=self.colors["white"],
-                            tags="text",
                             justify=tk.CENTER,
-                            angle=text_angle,
                         )
+                else:
+                    for char_index, char in enumerate(name_chars):
+                        text_radius = base_radius + char_index * char_step
+                        tx = cx + text_radius * math.cos(mid_angle_rad)
+                        ty = cy - text_radius * math.sin(mid_angle_rad)
+                        if draw_outline:
+                            self._draw_text_with_outline(
+                                tx,
+                                ty,
+                                char,
+                                ("Microsoft YaHei UI", base_font_size, "bold"),
+                                text_color=self.colors["white"],
+                                outline_color=self.colors["red_deep"],
+                                thickness=1,
+                                tags="text",
+                                justify=tk.CENTER,
+                                angle=text_angle,
+                            )
+                        else:
+                            self.canvas.create_text(
+                                tx,
+                                ty,
+                                text=char,
+                                font=("Microsoft YaHei UI", base_font_size, "bold"),
+                                fill=self.colors["white"],
+                                tags="text",
+                                justify=tk.CENTER,
+                                angle=text_angle,
+                            )
 
         self.canvas.create_oval(
             cx - 70,

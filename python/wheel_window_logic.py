@@ -202,13 +202,15 @@ class WheelWindowLogic:
         for i, person in enumerate(eligible):
             dept = getattr(person, 'department', '')
             full_text = f"{dept} {person.person_id} {person.name}".strip()
+            angle_center = i * self.segment_angle + self.segment_angle / 2
             self.wheel_names.append({
                 "index": i,
                 "id": str(person.person_id),
                 "name": person.name,
                 "full_text": full_text,
                 "color": random_colors[i % len(random_colors)],
-                "angle_center": i * self.segment_angle + self.segment_angle / 2
+                "angle_center": angle_center,
+                "angle_center_rad": math.radians(angle_center),
             })
 
         self.phase = "idle"
