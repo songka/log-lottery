@@ -122,11 +122,10 @@ class WheelWindowLogic:
 
         clean_excluded_ids = set()
         for item in self.excluded_ids:
-            if hasattr(item, 'person_id'): clean_excluded_ids.add(str(item.person_id))
-            else: clean_excluded_ids.add(str(item))
-        if prize.exclude_previous_winners:
-            already_won_ids = {str(winner["person_id"]) for winner in self.lottery_state.get("winners", [])}
-            clean_excluded_ids |= already_won_ids
+            if hasattr(item, "person_id"):
+                clean_excluded_ids.add(str(item.person_id))
+            else:
+                clean_excluded_ids.add(str(item))
 
         remaining = remaining_slots(prize, self.lottery_state)
         if remaining <= 0:
@@ -134,7 +133,20 @@ class WheelWindowLogic:
 
         preview_state = copy.deepcopy(self.lottery_state)
         # Bug2: 一次性抽完当前奖项剩余名额，进入自动连抽队列
-        winners = draw_prize(prize, self.people, preview_state, self.global_must_win, clean_excluded_ids)
+        try:
+            winners = draw_prize(
+                prize,
+                self.people,
+                preview_state,
+                self.global_must_win,
+                clean_excluded_ids,
+                include_excluded=self.include_excluded,
+                excluded_winner_range=self.excluded_winner_range,
+            )
+        except ValueError as exc:
+            self.phase = "idle"
+            messagebox.showinfo("结果", str(exc))
+            return
 
         if not winners:
             self.phase = "idle"
@@ -179,10 +191,15 @@ class WheelWindowLogic:
         previous_winners_set = {str(w["person_id"]) for w in self.lottery_state["winners"]} if prize.exclude_previous_winners else set()
         clean_excluded_ids = set()
         for item in self.excluded_ids:
-            if hasattr(item, 'person_id'): clean_excluded_ids.add(str(item.person_id))
-            else: clean_excluded_ids.add(str(item))
+            if hasattr(item, "person_id"):
+                clean_excluded_ids.add(str(item.person_id))
+            else:
+                clean_excluded_ids.add(str(item))
+        exclude_excluded_list = prize.exclude_excluded_list and not self.include_excluded
 
-        blacklist = clean_excluded_ids | excluded_must_win | previous_winners_set | existing_prize_winners
+        blacklist = excluded_must_win | previous_winners_set | existing_prize_winners
+        if exclude_excluded_list:
+            blacklist |= clean_excluded_ids
         
         eligible = []
         for p in self.people:
