@@ -415,6 +415,27 @@ class LotteryApp:
     def _build_excluded_editor(self, parent: ttk.Frame) -> None:
         self.excluded_admin_frame = ttk.Frame(parent)
 
+        settings_frame = ttk.LabelFrame(self.excluded_admin_frame, text="排除名单设置", padding=10)
+        settings_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+        ttk.Label(settings_frame, text="排除名单中奖人数范围:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        min_entry = ttk.Entry(settings_frame, textvariable=self.excluded_min_var, width=8)
+        min_entry.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(settings_frame, text="~").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        max_entry = ttk.Entry(settings_frame, textvariable=self.excluded_max_var, width=8)
+        max_entry.grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+
+        vcmd = (self.root.register(self._validate_range_entry), "%P")
+        min_entry.configure(validate="key", validatecommand=vcmd)
+        max_entry.configure(validate="key", validatecommand=vcmd)
+        min_entry.bind("<FocusOut>", self._handle_excluded_range_change)
+        max_entry.bind("<FocusOut>", self._handle_excluded_range_change)
+        min_entry.bind("<Return>", self._handle_excluded_range_change)
+        max_entry.bind("<Return>", self._handle_excluded_range_change)
+
+        ttk.Label(settings_frame, text="范围统计：所有奖项", foreground="#666").grid(
+            row=1, column=0, columnspan=4, sticky=tk.W, padx=5, pady=(4, 0)
+        )
+
         self.excluded_tree = ttk.Treeview(
             self.excluded_admin_frame, columns=("id", "name", "department"), show="headings", height=12
         )
