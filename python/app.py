@@ -1035,6 +1035,7 @@ class LotteryApp:
                 excluded_ids,
                 include_excluded=include_excluded,
                 excluded_winner_range=excluded_range,
+                prizes=self.prizes,
             )
         except ValueError as exc:
             messagebox.showerror("抽奖失败", str(exc))
@@ -1177,6 +1178,7 @@ class LotteryApp:
                 excluded_ids,
                 include_excluded=include_excluded,
                 excluded_winner_range=excluded_range,
+                prizes=self.prizes,
             )
         except ValueError as exc:
             messagebox.showerror("抽奖失败", str(exc))
@@ -1217,6 +1219,7 @@ class LotteryApp:
                         excluded_ids,
                         include_excluded=include_excluded,
                         excluded_winner_range=excluded_range,
+                        prizes=self.prizes,
                     )
                 )
         except ValueError as exc:
