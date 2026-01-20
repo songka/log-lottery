@@ -41,6 +41,8 @@ class WheelLotteryWindow(
         state: dict[str, Any],
         global_must_win: set[str],
         excluded_ids: set[str] | list[Any],
+        include_excluded: bool,
+        excluded_winner_range: tuple[int | None, int | None] | None,
         on_transfer: Callable[[dict[str, Any], list[dict[str, Any]]], None],
         on_close: Callable[[], None],
     ) -> None:
@@ -51,6 +53,8 @@ class WheelLotteryWindow(
         self.lottery_state = state 
         self.global_must_win = global_must_win
         self.excluded_ids = excluded_ids
+        self.include_excluded = include_excluded
+        self.excluded_winner_range = excluded_winner_range
         self.on_transfer = on_transfer
         self.on_close = on_close
 

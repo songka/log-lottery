@@ -5,5 +5,7 @@
   "output_dir": "output",
   "results_file": "results.json",
   "results_csv": "results.csv",
-  "admin_password": "admin"
+  "admin_password": "admin",
+  "excluded_winners_min": 0,
+  "excluded_winners_max": null
 }
