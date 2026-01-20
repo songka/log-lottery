@@ -62,6 +62,21 @@ def _parse_bool(value: Any, default: bool = True) -> bool:
     raise ValueError(f"无法解析布尔值: {value}")
 
 
+def _parse_optional_int(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    raw = str(value).strip()
+    if raw == "":
+        return None
+    return int(raw)
+
+
 def _split_ids(raw: str) -> List[str]:
     if not raw:
         return []
@@ -305,13 +320,19 @@ def draw_prize(
     state: Dict[str, Any],
     global_must_win: set[str],
     excluded_ids: Optional[set[str]] = None,
+    include_excluded: bool = False,
+    excluded_winner_range: tuple[int | None, int | None] | None = None,
+    prizes: Optional[List[PrizeConfig]] = None,
 ) -> List[Dict[str, Any]]:
     prize_state = state["prizes"].setdefault(prize.prize_id, {"winners": []})
     existing_prize_winners = set(prize_state["winners"])
     existing_global_winners = {winner["person_id"] for winner in state["winners"]}
     excluded_ids = excluded_ids or set()
-    if not prize.exclude_excluded_list:
-        excluded_ids = set()
+    exclude_excluded_list = prize.exclude_excluded_list and not include_excluded
+    if not exclude_excluded_list:
+        exclusion_blocklist = set()
+    else:
+        exclusion_blocklist = set(excluded_ids)
 
     remaining = remaining_slots(prize, state)
     if remaining <= 0:
@@ -327,16 +348,17 @@ def draw_prize(
         if person.person_id not in excluded_winners
         and person.person_id not in excluded_must_win
         and person.person_id not in existing_prize_winners
-        and person.person_id not in excluded_ids
+        and person.person_id not in exclusion_blocklist
     ]
 
     selected: List[Dict[str, Any]] = []
     selected_ids = set()
+    excluded_selected_count = 0
 
     for must_id in prize.must_win_ids:
         if must_id in existing_prize_winners:
             continue
-        if must_id in excluded_ids:
+        if exclude_excluded_list and must_id in excluded_ids:
             continue
         match = next((person for person in people if person.person_id == must_id), None)
         if not match:
@@ -353,25 +375,131 @@ def draw_prize(
             }
         )
         selected_ids.add(match.person_id)
+        if match.person_id in excluded_ids:
+            excluded_selected_count += 1
 
     remaining = prize.count - len(existing_prize_winners) - len(selected)
     if remaining > 0:
-        random_pool = [person for person in eligible_people if person.person_id not in selected_ids]
-        if remaining > len(random_pool):
-            remaining = len(random_pool)
-        for person in random.sample(random_pool, remaining):
-            selected.append(
-                {
-                    "timestamp": utc_now(),
-                    "prize_id": prize.prize_id,
-                    "prize_name": prize.name,
-                    "person_id": person.person_id,
-                    "person_name": person.name,
-                    "department": person.department,
-                    "source": "random",
-                }
+        apply_excluded_range = (
+            excluded_winner_range is not None
+            and not exclude_excluded_list
+            and prizes is not None
+            and not prize.exclude_must_win
+        )
+        if apply_excluded_range:
+            prize_lookup = {item.prize_id: item for item in prizes}
+            eligible_prizes = [item for item in prizes if not item.exclude_must_win]
+            total_remaining_slots = sum(remaining_slots(item, state) for item in eligible_prizes)
+            remaining_slots_after = total_remaining_slots - remaining
+            existing_excluded_total = sum(
+                1
+                for entry in state["winners"]
+                if entry["person_id"] in excluded_ids
+                and prize_lookup.get(entry["prize_id"])
+                and not prize_lookup[entry["prize_id"]].exclude_must_win
             )
-            selected_ids.add(person.person_id)
+            min_excluded, max_excluded = excluded_winner_range
+            min_excluded = 0 if min_excluded is None else min_excluded
+            if min_excluded < 0:
+                raise ValueError("排除名单最小中奖人数不能为负数。")
+            if max_excluded is not None and max_excluded < 0:
+                raise ValueError("排除名单最大中奖人数不能为负数。")
+            if max_excluded is not None and max_excluded < min_excluded:
+                raise ValueError("排除名单最大中奖人数不能小于最小值。")
+            current_excluded_total = existing_excluded_total + excluded_selected_count
+            if max_excluded is not None and current_excluded_total > max_excluded:
+                raise ValueError("排除名单中奖人数已超过最大限制。")
+
+            excluded_pool = [
+                person
+                for person in eligible_people
+                if person.person_id in excluded_ids and person.person_id not in selected_ids
+            ]
+            non_excluded_pool = [
+                person
+                for person in eligible_people
+                if person.person_id not in excluded_ids and person.person_id not in selected_ids
+            ]
+
+            min_needed_total = max(min_excluded - current_excluded_total, 0)
+            min_needed_in_current = max(min_needed_total - remaining_slots_after, 0)
+            if min_needed_in_current > remaining:
+                raise ValueError("排除名单最小中奖人数超过可抽取名额。")
+            if min_needed_in_current > len(excluded_pool):
+                raise ValueError("排除名单人数不足，无法满足最小中奖人数要求。")
+
+            if max_excluded is not None:
+                max_additional_excluded = max_excluded - current_excluded_total
+                if max_additional_excluded < 0:
+                    raise ValueError("排除名单中奖人数已超过最大限制。")
+            else:
+                max_additional_excluded = remaining
+
+            min_non_excluded_needed = max(remaining - len(excluded_pool), 0)
+            max_excluded_allowed = min(
+                max_additional_excluded,
+                remaining - min_non_excluded_needed,
+                len(excluded_pool),
+            )
+            min_excluded_allowed = min_needed_in_current
+            if min_excluded_allowed > max_excluded_allowed:
+                raise ValueError("候选人不足，无法满足排除名单中奖人数范围。")
+            excluded_count = (
+                min_excluded_allowed
+                if min_excluded_allowed == max_excluded_allowed
+                else random.randint(min_excluded_allowed, max_excluded_allowed)
+            )
+            non_excluded_needed = remaining - excluded_count
+            if non_excluded_needed > len(non_excluded_pool):
+                raise ValueError("非排除名单人数不足，无法满足最大中奖人数限制。")
+
+            if excluded_count:
+                for person in random.sample(excluded_pool, excluded_count):
+                    selected.append(
+                        {
+                            "timestamp": utc_now(),
+                            "prize_id": prize.prize_id,
+                            "prize_name": prize.name,
+                            "person_id": person.person_id,
+                            "person_name": person.name,
+                            "department": person.department,
+                            "source": "random",
+                        }
+                    )
+                    selected_ids.add(person.person_id)
+                    excluded_selected_count += 1
+
+            if non_excluded_needed:
+                for person in random.sample(non_excluded_pool, non_excluded_needed):
+                    selected.append(
+                        {
+                            "timestamp": utc_now(),
+                            "prize_id": prize.prize_id,
+                            "prize_name": prize.name,
+                            "person_id": person.person_id,
+                            "person_name": person.name,
+                            "department": person.department,
+                            "source": "random",
+                        }
+                    )
+                    selected_ids.add(person.person_id)
+        else:
+            random_pool = [person for person in eligible_people if person.person_id not in selected_ids]
+            if remaining > len(random_pool):
+                remaining = len(random_pool)
+            for person in random.sample(random_pool, remaining):
+                selected.append(
+                    {
+                        "timestamp": utc_now(),
+                        "prize_id": prize.prize_id,
+                        "prize_name": prize.name,
+                        "person_id": person.person_id,
+                        "person_name": person.name,
+                        "department": person.department,
+                        "source": "random",
+                    }
+                )
+                selected_ids.add(person.person_id)
 
     for entry in selected:
         state["winners"].append(entry)
@@ -420,6 +548,11 @@ def main() -> None:
     output_dir = resolve_path(base_dir, config.get("output_dir", "output"))
     results_file = config.get("results_file", "results.json")
     results_csv = config.get("results_csv", "results.csv")
+    try:
+        excluded_winners_min = _parse_optional_int(config.get("excluded_winners_min"))
+        excluded_winners_max = _parse_optional_int(config.get("excluded_winners_max"))
+    except ValueError as exc:
+        raise SystemExit(f"排除名单中奖人数配置错误: {exc}") from exc
 
     ensure_output_dir(output_dir)
     state_path = output_dir / results_file
@@ -450,21 +583,46 @@ def main() -> None:
         return
 
     selected_total: List[Dict[str, Any]] = []
-    if args.command == "draw":
-        prize = next((item for item in prizes if item.prize_id == args.prize), None)
-        if not prize:
-            raise SystemExit(f"未找到奖项: {args.prize}")
-        remaining = remaining_slots(prize, state)
-        if remaining <= 0:
-            available = [item for item in prizes if remaining_slots(item, state) > 0]
-            if available:
-                options = "，".join(f"{item.prize_id}({item.name})" for item in available)
-                raise SystemExit(f"奖项已抽完: {args.prize}。可抽奖项: {options}")
-            raise SystemExit("所有奖项已抽完，无可抽奖项。")
-        selected_total.extend(draw_prize(prize, people, state, global_must_win, excluded_ids))
-    elif args.command == "draw-all":
-        for prize in prizes:
-            selected_total.extend(draw_prize(prize, people, state, global_must_win, excluded_ids))
+    try:
+        if args.command == "draw":
+            prize = next((item for item in prizes if item.prize_id == args.prize), None)
+            if not prize:
+                raise SystemExit(f"未找到奖项: {args.prize}")
+            remaining = remaining_slots(prize, state)
+            if remaining <= 0:
+                available = [item for item in prizes if remaining_slots(item, state) > 0]
+                if available:
+                    options = "，".join(f"{item.prize_id}({item.name})" for item in available)
+                    raise SystemExit(f"奖项已抽完: {args.prize}。可抽奖项: {options}")
+                raise SystemExit("所有奖项已抽完，无可抽奖项。")
+                selected_total.extend(
+                    draw_prize(
+                        prize,
+                        people,
+                        state,
+                        global_must_win,
+                        excluded_ids,
+                        include_excluded=args.include_excluded,
+                        excluded_winner_range=(excluded_winners_min, excluded_winners_max),
+                        prizes=prizes,
+                    )
+                )
+        elif args.command == "draw-all":
+            for prize in prizes:
+                selected_total.extend(
+                    draw_prize(
+                        prize,
+                        people,
+                        state,
+                        global_must_win,
+                        excluded_ids,
+                        include_excluded=args.include_excluded,
+                        excluded_winner_range=(excluded_winners_min, excluded_winners_max),
+                        prizes=prizes,
+                    )
+                )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     save_state(state_path, state)
     save_csv(csv_path, state["winners"])
