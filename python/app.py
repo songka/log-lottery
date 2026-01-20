@@ -267,13 +267,20 @@ class LotteryApp:
         ttk.Label(settings_frame, text="排除名单中奖人数范围:").grid(
             row=2, column=0, sticky=tk.W, padx=5, pady=(6, 0)
         )
-        ttk.Entry(settings_frame, textvariable=self.excluded_min_var, width=8).grid(
-            row=2, column=1, sticky=tk.W, padx=5, pady=(6, 0)
-        )
+        min_entry = ttk.Entry(settings_frame, textvariable=self.excluded_min_var, width=8)
+        min_entry.grid(row=2, column=1, sticky=tk.W, padx=5, pady=(6, 0))
         ttk.Label(settings_frame, text="~").grid(row=2, column=2, sticky=tk.W, padx=5, pady=(6, 0))
-        ttk.Entry(settings_frame, textvariable=self.excluded_max_var, width=8).grid(
-            row=2, column=3, sticky=tk.W, padx=5, pady=(6, 0)
-        )
+        max_entry = ttk.Entry(settings_frame, textvariable=self.excluded_max_var, width=8)
+        max_entry.grid(row=2, column=3, sticky=tk.W, padx=5, pady=(6, 0))
+
+        vcmd = (self.root.register(self._validate_range_entry), "%P")
+        min_entry.configure(validate="key", validatecommand=vcmd)
+        max_entry.configure(validate="key", validatecommand=vcmd)
+
+        min_entry.bind("<FocusOut>", self._handle_excluded_range_change)
+        max_entry.bind("<FocusOut>", self._handle_excluded_range_change)
+        min_entry.bind("<Return>", self._handle_excluded_range_change)
+        max_entry.bind("<Return>", self._handle_excluded_range_change)
 
         action_frame = ttk.Frame(self.main_frame, padding=10)
         action_frame.pack(fill=tk.X)
@@ -626,11 +633,7 @@ class LotteryApp:
 
         # 4. 创建转盘窗口
         include_excluded = self._include_excluded_list()
-        try:
-            excluded_range = self._get_excluded_winner_range()
-        except ValueError as exc:
-            messagebox.showerror("范围错误", str(exc))
-            return
+        excluded_range = self._get_excluded_winner_range()
 
         self.wheel_window = WheelLotteryWindow(
             root=self.root,
@@ -694,11 +697,7 @@ class LotteryApp:
             prize = available[0]
         excluded_ids = self._current_excluded_ids()
         include_excluded = self._include_excluded_list()
-        try:
-            excluded_range = self._get_excluded_winner_range()
-        except ValueError as exc:
-            messagebox.showerror("范围错误", str(exc))
-            return
+        excluded_range = self._get_excluded_winner_range()
         background_color = str(self.config.get("visual_background_color", "#0b0f1c"))
         background_path = self.config.get("visual_background") or None
         background_music_path = self.config.get("visual_music") or None
@@ -1020,11 +1019,7 @@ class LotteryApp:
             return
         excluded_ids = self._current_excluded_ids()
         include_excluded = self._include_excluded_list()
-        try:
-            excluded_range = self._get_excluded_winner_range()
-        except ValueError as exc:
-            messagebox.showerror("范围错误", str(exc))
-            return
+        excluded_range = self._get_excluded_winner_range()
         preview_state = copy.deepcopy(self.state)
         try:
             self.pending_winners = draw_prize(
@@ -1125,7 +1120,24 @@ class LotteryApp:
     def _include_excluded_list(self) -> bool:
         return self.include_excluded_var.get()
 
-    def _get_excluded_winner_range(self) -> tuple[int | None, int | None]:
+    def _validate_range_entry(self, value: str) -> bool:
+        return value.isdigit() or value == ""
+
+    def _handle_excluded_range_change(self, event: tk.Event | None = None) -> None:
+        try:
+            min_value, max_value = self._parse_excluded_range()
+        except ValueError as exc:
+            messagebox.showerror("范围错误", str(exc))
+            current_min = self.config.get("excluded_winners_min")
+            current_max = self.config.get("excluded_winners_max")
+            self.excluded_min_var.set("" if current_min is None else str(current_min))
+            self.excluded_max_var.set("" if current_max is None else str(current_max))
+            return
+        self.config["excluded_winners_min"] = min_value
+        self.config["excluded_winners_max"] = max_value
+        self._save_config_file()
+
+    def _parse_excluded_range(self) -> tuple[int | None, int | None]:
         raw_min = self.excluded_min_var.get().strip()
         raw_max = self.excluded_max_var.get().strip()
         min_value = int(raw_min) if raw_min else None
@@ -1137,6 +1149,9 @@ class LotteryApp:
         if min_value is not None and max_value is not None and max_value < min_value:
             raise ValueError("排除名单最大中奖人数不能小于最小值。")
         return min_value, max_value
+
+    def _get_excluded_winner_range(self) -> tuple[int | None, int | None]:
+        return self.config.get("excluded_winners_min"), self.config.get("excluded_winners_max")
 
     def _persist_state(self) -> None:
         save_state(self.state_path, self.state)
@@ -1164,11 +1179,7 @@ class LotteryApp:
 
         excluded_ids = self._current_excluded_ids()
         include_excluded = self._include_excluded_list()
-        try:
-            excluded_range = self._get_excluded_winner_range()
-        except ValueError as exc:
-            messagebox.showerror("范围错误", str(exc))
-            return
+        excluded_range = self._get_excluded_winner_range()
         try:
             selected = draw_prize(
                 prize,
@@ -1203,11 +1214,7 @@ class LotteryApp:
         selected_total = []
         excluded_ids = self._current_excluded_ids()
         include_excluded = self._include_excluded_list()
-        try:
-            excluded_range = self._get_excluded_winner_range()
-        except ValueError as exc:
-            messagebox.showerror("范围错误", str(exc))
-            return
+        excluded_range = self._get_excluded_winner_range()
         try:
             for prize in self.prizes:
                 selected_total.extend(
@@ -1272,6 +1279,10 @@ class LotteryApp:
         self.excluded_path_var.set(str(self.excluded_file))
         self.output_dir_var.set(str(self.output_dir))
         self.config_path_var.set(str(self.config_path))
+        excluded_min = self.config.get("excluded_winners_min")
+        excluded_max = self.config.get("excluded_winners_max")
+        self.excluded_min_var.set("" if excluded_min is None else str(excluded_min))
+        self.excluded_max_var.set("" if excluded_max is None else str(excluded_max))
         self._update_login_state()
         self._refresh_people_tree()
         self._refresh_prizes_tree()
