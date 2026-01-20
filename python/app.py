@@ -282,6 +282,10 @@ class LotteryApp:
         min_entry.bind("<Return>", self._handle_excluded_range_change)
         max_entry.bind("<Return>", self._handle_excluded_range_change)
 
+        ttk.Label(settings_frame, text="范围统计：所有奖项", foreground="#666").grid(
+            row=3, column=0, columnspan=4, sticky=tk.W, padx=5, pady=(4, 0)
+        )
+
         action_frame = ttk.Frame(self.main_frame, padding=10)
         action_frame.pack(fill=tk.X)
         ttk.Button(action_frame, text="抽取当前奖项", command=self._draw_selected).pack(side=tk.LEFT, padx=5)
@@ -1242,6 +1246,14 @@ class LotteryApp:
             self._append_output(
                 f"- {entry['prize_name']} | {entry['person_name']} ({entry['person_id']}) [{entry['source']}]"
             )
+        excluded_range = self._get_excluded_winner_range()
+        min_value, max_value = excluded_range
+        if (min_value is not None or max_value is not None) and not include_excluded:
+            range_label = f"{min_value or 0}~{max_value if max_value is not None else '不限'}"
+            excluded_total = sum(
+                1 for winner in self.state["winners"] if winner["person_id"] in excluded_ids
+            )
+            self._append_output(f"排除名单中奖人数(全部奖项): {excluded_total}，范围: {range_label}")
 
     def _reset_results(self) -> None:
         if not messagebox.askyesno("确认", "确定要清空所有中奖结果吗？"):

@@ -382,27 +382,23 @@ def draw_prize(
     if remaining > 0:
         apply_excluded_range = (
             excluded_winner_range is not None
-            and not exclude_excluded_list
+            and not include_excluded
             and prizes is not None
-            and not prize.exclude_must_win
         )
         if apply_excluded_range:
             prize_lookup = {item.prize_id: item for item in prizes}
-            eligible_prizes = [item for item in prizes if not item.exclude_must_win]
-            total_remaining_slots = sum(remaining_slots(item, state) for item in eligible_prizes)
+            total_remaining_slots = sum(remaining_slots(item, state) for item in prizes)
             remaining_slots_after = total_remaining_slots - remaining
             existing_applicable_total = sum(
                 1
                 for entry in state["winners"]
                 if prize_lookup.get(entry["prize_id"])
-                and not prize_lookup[entry["prize_id"]].exclude_must_win
             )
             existing_excluded_total = sum(
                 1
                 for entry in state["winners"]
                 if entry["person_id"] in excluded_ids
                 and prize_lookup.get(entry["prize_id"])
-                and not prize_lookup[entry["prize_id"]].exclude_must_win
             )
             min_excluded, max_excluded = excluded_winner_range
             min_excluded = 0 if min_excluded is None else min_excluded
