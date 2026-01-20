@@ -1,4 +1,12 @@
 ﻿id,name,count,exclude_previous_winners,exclude_must_win,exclude_excluded_list,must_win_ids
-P001,三等奖,2,True,True,True,
-P002,二等奖,1,True,True,True,U1006
-P003,一等奖,1,True,False,True,
+P001,三等奖-1,6,True,True,False,
+P002,三等奖-2,6,True,True,False,
+P003,三等奖-3,6,True,True,False,
+P004,三等奖-4,6,True,True,False,
+P005,三等奖-5,6,True,True,False,
+P006,三等奖-6,5,True,True,False,
+P011,二等奖,6,True,True,True,
+P033,一等奖,2,True,True,True,
+P034,一等奖,2,True,True,True,YAO51
+P035,一等奖,2,True,True,True,
+P041,特等奖,1,True,True,True,
