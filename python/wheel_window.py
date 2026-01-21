@@ -81,6 +81,7 @@ class WheelLotteryWindow(
         wheel_spin_music_volume: float,
         wheel_summary_music: str | None,
         wheel_summary_music_volume: float,
+        wheel_segment_colors: list[str] | None,
         wheel_colors: dict[str, str] | None,
         on_transfer: Callable[[dict[str, Any], list[dict[str, Any]]], None],
         on_close: Callable[[], None],
@@ -109,7 +110,10 @@ class WheelLotteryWindow(
         self.colors = copy.deepcopy(DEFAULT_WHEEL_COLORS)
         if wheel_colors:
             self.colors.update({key: value for key, value in wheel_colors.items() if value})
-        self.colors["wheel_colors"] = ["#E53935", "#C62828", "#F4C542", "#FF8A65", "#FFD54F"]
+        if wheel_segment_colors:
+            self.colors["wheel_colors"] = wheel_segment_colors
+        else:
+            self.colors["wheel_colors"] = ["#E53935", "#C62828", "#F4C542", "#FF8A65", "#FFD54F"]
         self.configure(bg=self.colors["panel_bg"])
 
         # 变量
@@ -234,6 +238,7 @@ class WheelLotteryWindow(
         spin_music_volume: float,
         summary_music_path: str | None,
         summary_music_volume: float,
+        segment_colors: list[str] | None,
         colors: dict[str, str],
     ) -> None:
         self.single_round_display = bool(single_round_display)
@@ -243,6 +248,8 @@ class WheelLotteryWindow(
         self.spin_music_volume = float(spin_music_volume)
         self.summary_music_path = summary_music_path
         self.summary_music_volume = float(summary_music_volume)
+        if segment_colors:
+            self.colors["wheel_colors"] = segment_colors
         self.colors.update(colors)
         self.configure(bg=self.colors["panel_bg"])
         if hasattr(self, "_apply_color_theme"):

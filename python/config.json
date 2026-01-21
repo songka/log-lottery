@@ -15,6 +15,13 @@
   "wheel_spin_music_volume": 0.6,
   "wheel_summary_music": "",
   "wheel_summary_music_volume": 0.6,
+  "wheel_segment_colors": [
+    "#E53935",
+    "#C62828",
+    "#F4C542",
+    "#FF8A65",
+    "#FFD54F"
+  ],
   "wheel_colors": {
     "bg_canvas": "#4A0C0C",
     "panel_bg": "#5C1010",

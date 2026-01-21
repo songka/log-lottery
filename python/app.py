@@ -127,6 +127,10 @@ class LotteryApp:
         config.setdefault("wheel_spin_music_volume", 0.6)
         config.setdefault("wheel_summary_music", "")
         config.setdefault("wheel_summary_music_volume", 0.6)
+        config.setdefault(
+            "wheel_segment_colors",
+            ["#E53935", "#C62828", "#F4C542", "#FF8A65", "#FFD54F"],
+        )
         config.setdefault("wheel_colors", copy.deepcopy(DEFAULT_WHEEL_COLORS))
         return config
 
@@ -158,6 +162,7 @@ class LotteryApp:
                 "wheel_spin_music_volume": 0.6,
                 "wheel_summary_music": "",
                 "wheel_summary_music_volume": 0.6,
+                "wheel_segment_colors": ["#E53935", "#C62828", "#F4C542", "#FF8A65", "#FFD54F"],
                 "wheel_colors": copy.deepcopy(DEFAULT_WHEEL_COLORS),
             }
             with self.config_path.open("w", encoding="utf-8") as handle:
@@ -662,6 +667,7 @@ class LotteryApp:
         wheel_spin_volume = float(self.config.get("wheel_spin_music_volume", 0.6) or 0.6)
         wheel_summary_music = self.config.get("wheel_summary_music") or None
         wheel_summary_volume = float(self.config.get("wheel_summary_music_volume", 0.6) or 0.6)
+        wheel_segment_colors = self.config.get("wheel_segment_colors")
 
         self.wheel_window = WheelLotteryWindow(
             root=self.root,
@@ -680,6 +686,7 @@ class LotteryApp:
             wheel_spin_music_volume=wheel_spin_volume,
             wheel_summary_music=wheel_summary_music,
             wheel_summary_music_volume=wheel_summary_volume,
+            wheel_segment_colors=wheel_segment_colors,
             wheel_colors=wheel_colors,
             on_transfer=self._on_wheel_transfer,
             on_close=lambda: setattr(self, "wheel_window", None),
@@ -739,6 +746,14 @@ class LotteryApp:
         spin_volume_var = tk.DoubleVar(value=float(self.config.get("wheel_spin_music_volume", 0.6) or 0.6))
         summary_music_var = tk.StringVar(value=str(self.config.get("wheel_summary_music", "")))
         summary_volume_var = tk.DoubleVar(value=float(self.config.get("wheel_summary_music_volume", 0.6) or 0.6))
+        segment_colors = self.config.get(
+            "wheel_segment_colors",
+            ["#E53935", "#C62828", "#F4C542", "#FF8A65", "#FFD54F"],
+        )
+        segment_color_vars = [
+            tk.StringVar(value=segment_colors[i] if i < len(segment_colors) else "#E53935")
+            for i in range(5)
+        ]
 
         colors = self._get_wheel_colors()
         color_vars = {
@@ -812,6 +827,24 @@ class LotteryApp:
 
         ttk.Separator(dialog).grid(row=7, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
 
+        ttk.Label(dialog, text="转盘分片颜色(5):").grid(row=8, column=0, sticky=tk.W, padx=8, pady=6)
+        segment_frame = ttk.Frame(dialog)
+        segment_frame.grid(row=8, column=1, columnspan=2, sticky=tk.W, pady=6)
+        for idx, color_var in enumerate(segment_color_vars):
+            ttk.Entry(segment_frame, textvariable=color_var, width=8).grid(row=0, column=idx * 2, padx=2)
+
+            def make_segment_picker(var: tk.StringVar) -> Callable[[], None]:
+                def _pick() -> None:
+                    color = colorchooser.askcolor(color=var.get(), parent=dialog)
+                    if color and color[1]:
+                        var.set(color[1])
+
+                return _pick
+
+            ttk.Button(segment_frame, text="选", command=make_segment_picker(color_var)).grid(
+                row=0, column=idx * 2 + 1, padx=(0, 6)
+            )
+
         color_labels = [
             ("画布背景", "bg_canvas"),
             ("面板背景", "panel_bg"),
@@ -825,7 +858,7 @@ class LotteryApp:
             ("本轮名单背景", "winner_bg"),
             ("本轮名单字体", "winner_fg"),
         ]
-        start_row = 8
+        start_row = 9
         for idx, (label, key) in enumerate(color_labels):
             row = start_row + idx
             ttk.Label(dialog, text=f"{label}:").grid(row=row, column=0, sticky=tk.W, padx=8, pady=4)
@@ -851,6 +884,7 @@ class LotteryApp:
             self.config["wheel_spin_music_volume"] = float(spin_volume_var.get())
             self.config["wheel_summary_music"] = summary_music_var.get().strip()
             self.config["wheel_summary_music_volume"] = float(summary_volume_var.get())
+            self.config["wheel_segment_colors"] = [var.get().strip() for var in segment_color_vars]
             self.config["wheel_colors"] = {key: var.get().strip() for key, var in color_vars.items()}
             self._save_config_file()
             wheel_window = getattr(self, "wheel_window", None)
@@ -863,6 +897,7 @@ class LotteryApp:
                     spin_music_volume=self.config["wheel_spin_music_volume"],
                     summary_music_path=self.config["wheel_summary_music"] or None,
                     summary_music_volume=self.config["wheel_summary_music_volume"],
+                    segment_colors=self.config["wheel_segment_colors"],
                     colors=self._get_wheel_colors(),
                 )
             dialog.destroy()
