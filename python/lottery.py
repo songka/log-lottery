@@ -323,6 +323,7 @@ def draw_prize(
     include_excluded: bool = False,
     excluded_winner_range: tuple[int | None, int | None] | None = None,
     prizes: Optional[List[PrizeConfig]] = None,
+    draw_count: int | None = None,
 ) -> List[Dict[str, Any]]:
     prize_state = state["prizes"].setdefault(prize.prize_id, {"winners": []})
     existing_prize_winners = set(prize_state["winners"])
@@ -337,6 +338,10 @@ def draw_prize(
     remaining = remaining_slots(prize, state)
     if remaining <= 0:
         return []
+    if draw_count is not None:
+        if draw_count < 0:
+            raise ValueError("抽奖人数不能为负数。")
+        remaining = min(remaining, draw_count)
 
     excluded_winners = existing_global_winners if prize.exclude_previous_winners else set()
     excluded_must_win = global_must_win if prize.exclude_must_win else set()
@@ -356,6 +361,8 @@ def draw_prize(
     excluded_selected_count = 0
 
     for must_id in prize.must_win_ids:
+        if remaining <= len(selected):
+            break
         if must_id in existing_prize_winners:
             continue
         if exclude_excluded_list and must_id in excluded_ids:
@@ -378,7 +385,7 @@ def draw_prize(
         if match.person_id in excluded_ids:
             excluded_selected_count += 1
 
-    remaining = prize.count - len(existing_prize_winners) - len(selected)
+    remaining = remaining - len(selected)
     if remaining > 0:
         apply_excluded_range = (
             excluded_winner_range is not None

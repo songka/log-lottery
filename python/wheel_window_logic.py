@@ -143,6 +143,7 @@ class WheelWindowLogic:
                 include_excluded=self.include_excluded,
                 excluded_winner_range=self.excluded_winner_range,
                 prizes=self.prizes,
+                draw_count=1,
             )
         except ValueError as exc:
             self.phase = "idle"
