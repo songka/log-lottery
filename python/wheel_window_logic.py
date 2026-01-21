@@ -321,6 +321,8 @@ class WheelWindowLogic:
                     #self._reset_round_display()
                     self.phase = "spinning"
                     self._init_time_physics(self.locked_charge)
+                    if hasattr(self, "_play_spin_music"):
+                        self._play_spin_music()
                     self.result_var.set("自动连抽中...")
                     self._update_btn_state()
                 else:
@@ -328,6 +330,8 @@ class WheelWindowLogic:
                         #self._reset_round_display()
                         self.phase = "spinning"
                         self._init_time_physics(self.locked_charge)
+                        if hasattr(self, "_play_spin_music"):
+                            self._play_spin_music()
                         self.result_var.set("自动连抽中...")
                         self._update_btn_state()
                     else:
