@@ -13,10 +13,10 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
-from typing import Any
+from typing import Any, Callable
 
 from visual_window import VisualLotteryWindow
-from wheel_window import WheelLotteryWindow
+from wheel_window import DEFAULT_WHEEL_COLORS, WheelLotteryWindow
 
 from lottery import (
     available_prizes,
@@ -80,6 +80,10 @@ class LotteryApp:
         self.excluded_path_var = tk.StringVar(value=str(self.excluded_file))
         self.output_dir_var = tk.StringVar(value=str(self.output_dir))
         self.include_excluded_var = tk.BooleanVar(value=False)
+        excluded_min = self.config.get("excluded_winners_min")
+        excluded_max = self.config.get("excluded_winners_max")
+        self.excluded_min_var = tk.StringVar(value="" if excluded_min is None else str(excluded_min))
+        self.excluded_max_var = tk.StringVar(value="" if excluded_max is None else str(excluded_max))
         self.login_status_var = tk.StringVar(value="未登录")
         self.draw_window = None
         self.draw_canvas = None
@@ -114,6 +118,16 @@ class LotteryApp:
         config.setdefault("visual_screen_y", 0)
         config.setdefault("visual_screen_width", 0)
         config.setdefault("visual_screen_height", 0)
+        config.setdefault("excluded_winners_min", 0)
+        config.setdefault("excluded_winners_max", None)
+        config.setdefault("wheel_single_round_display", False)
+        config.setdefault("wheel_round_music", "")
+        config.setdefault("wheel_round_music_volume", 0.6)
+        config.setdefault("wheel_spin_music", "")
+        config.setdefault("wheel_spin_music_volume", 0.6)
+        config.setdefault("wheel_summary_music", "")
+        config.setdefault("wheel_summary_music_volume", 0.6)
+        config.setdefault("wheel_colors", copy.deepcopy(DEFAULT_WHEEL_COLORS))
         return config
 
     def _ensure_default_files(self) -> None:
@@ -135,6 +149,16 @@ class LotteryApp:
                 "visual_screen_y": 0,
                 "visual_screen_width": 0,
                 "visual_screen_height": 0,
+                "excluded_winners_min": 0,
+                "excluded_winners_max": None,
+                "wheel_single_round_display": False,
+                "wheel_round_music": "",
+                "wheel_round_music_volume": 0.6,
+                "wheel_spin_music": "",
+                "wheel_spin_music_volume": 0.6,
+                "wheel_summary_music": "",
+                "wheel_summary_music_volume": 0.6,
+                "wheel_colors": copy.deepcopy(DEFAULT_WHEEL_COLORS),
             }
             with self.config_path.open("w", encoding="utf-8") as handle:
                 json.dump(default_config, handle, ensure_ascii=False, indent=2)
@@ -225,7 +249,7 @@ class LotteryApp:
         self.main_notebook.add(self.config_tab, text="配置文件")
         self.main_notebook.add(self.participants_tab, text="人员名单")
         self.main_notebook.add(self.prizes_tab, text="奖项配置")
-        self.main_notebook.add(self.excluded_tab, text="排查名单")
+        self.main_notebook.add(self.excluded_tab, text="排除名单")
 
         self._build_main_tab()
         self._build_config_editor(self.config_tab)
@@ -252,7 +276,7 @@ class LotteryApp:
 
         ttk.Checkbutton(
             settings_frame,
-            text="不排除排查名单",
+            text="忽略排除名单",
             variable=self.include_excluded_var,
         ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(6, 0))
 
@@ -262,6 +286,7 @@ class LotteryApp:
         ttk.Button(action_frame, text="抽取全部奖项", command=self._draw_all).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="打开抽奖界面", command=self._open_draw_window).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="转盘抽奖", command=self._open_wheel_window).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="转盘设置", command=self._open_wheel_settings).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="开启大屏模式", command=self._open_visual_window).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="大屏设置", command=self._open_visual_settings).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="刷新名单", command=self._refresh_winners).pack(side=tk.LEFT, padx=5)
@@ -282,7 +307,7 @@ class LotteryApp:
         self.participants_path_label.pack(anchor=tk.W)
         ttk.Label(info_frame, text="奖项配置:").pack(anchor=tk.W)
         ttk.Label(info_frame, textvariable=self.prizes_path_var).pack(anchor=tk.W)
-        self.excluded_label = ttk.Label(info_frame, text="排查名单:")
+        self.excluded_label = ttk.Label(info_frame, text="排除名单:")
         self.excluded_label.pack(anchor=tk.W)
         self.excluded_path_label = ttk.Label(info_frame, textvariable=self.excluded_path_var)
         self.excluded_path_label.pack(anchor=tk.W)
@@ -301,7 +326,7 @@ class LotteryApp:
         ttk.Button(button_frame, text="选择奖项配置", command=self._select_prizes_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="选择输出目录", command=self._select_output_dir).pack(side=tk.LEFT, padx=5)
         self.excluded_select_button = ttk.Button(
-            button_frame, text="选择排查名单", command=self._select_excluded_file
+            button_frame, text="选择排除名单", command=self._select_excluded_file
         )
         ttk.Button(button_frame, text="登录/退出", command=self._toggle_login).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="重新加载配置", command=self._reload_all).pack(side=tk.LEFT, padx=5)
@@ -361,7 +386,7 @@ class LotteryApp:
             ("count", "数量", 60),
             ("exclude_previous_winners", "排除已中奖", 90),
             ("exclude_must_win", "排除保底", 90),
-            ("exclude_excluded_list", "排除排查名单", 110),
+            ("exclude_excluded_list", "应用排除名单", 110),
             ("must_win_ids", "保底工号", 160),
         )
         for col, label, width in headings:
@@ -384,6 +409,27 @@ class LotteryApp:
 
     def _build_excluded_editor(self, parent: ttk.Frame) -> None:
         self.excluded_admin_frame = ttk.Frame(parent)
+
+        settings_frame = ttk.LabelFrame(self.excluded_admin_frame, text="排除名单设置", padding=10)
+        settings_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+        ttk.Label(settings_frame, text="排除名单中奖人数范围:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        min_entry = ttk.Entry(settings_frame, textvariable=self.excluded_min_var, width=8)
+        min_entry.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(settings_frame, text="~").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        max_entry = ttk.Entry(settings_frame, textvariable=self.excluded_max_var, width=8)
+        max_entry.grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+
+        vcmd = (self.root.register(self._validate_range_entry), "%P")
+        min_entry.configure(validate="key", validatecommand=vcmd)
+        max_entry.configure(validate="key", validatecommand=vcmd)
+        min_entry.bind("<FocusOut>", self._handle_excluded_range_change)
+        max_entry.bind("<FocusOut>", self._handle_excluded_range_change)
+        min_entry.bind("<Return>", self._handle_excluded_range_change)
+        max_entry.bind("<Return>", self._handle_excluded_range_change)
+
+        ttk.Label(settings_frame, text="范围统计：所有奖项", foreground="#666").grid(
+            row=1, column=0, columnspan=4, sticky=tk.W, padx=5, pady=(4, 0)
+        )
 
         self.excluded_tree = ttk.Treeview(
             self.excluded_admin_frame, columns=("id", "name", "department"), show="headings", height=12
@@ -453,7 +499,7 @@ class LotteryApp:
 
     def _select_excluded_file(self) -> None:
         path = filedialog.askopenfilename(
-            title="选择排查名单文件",
+            title="选择排除名单文件",
             filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
         )
         if not path:
@@ -591,7 +637,7 @@ class LotteryApp:
         # 如果 self.excluded_ids 不存在，则从加载函数获取
         excluded_ids = getattr(self, "excluded_ids", None)
         if excluded_ids is None:
-            # 尝试重新加载一次全局排查名单
+            # 尝试重新加载一次全局排除名单
             excluded_ids = load_excluded_people(resolve_path(self.base_dir, self.config["excluded_file"]))
         
         # 重新同步一次最新的状态和奖项
@@ -606,13 +652,35 @@ class LotteryApp:
              current_prize_id = current_val.split(" - ")[0]
 
         # 4. 创建转盘窗口
+        include_excluded = self._include_excluded_list()
+        excluded_range = self._get_excluded_winner_range()
+        wheel_colors = self._get_wheel_colors()
+        wheel_single_round = bool(self.config.get("wheel_single_round_display", False))
+        wheel_round_music = self.config.get("wheel_round_music") or None
+        wheel_round_volume = float(self.config.get("wheel_round_music_volume", 0.6) or 0.6)
+        wheel_spin_music = self.config.get("wheel_spin_music") or None
+        wheel_spin_volume = float(self.config.get("wheel_spin_music_volume", 0.6) or 0.6)
+        wheel_summary_music = self.config.get("wheel_summary_music") or None
+        wheel_summary_volume = float(self.config.get("wheel_summary_music_volume", 0.6) or 0.6)
+
         self.wheel_window = WheelLotteryWindow(
             root=self.root,
+            base_dir=self.base_dir,
             prizes=self.prizes,
             people=self.people,
             state=self.state,
             global_must_win=global_must_win,
             excluded_ids=excluded_ids,
+            include_excluded=include_excluded,
+            excluded_winner_range=excluded_range,
+            wheel_single_round_display=wheel_single_round,
+            wheel_round_music=wheel_round_music,
+            wheel_round_music_volume=wheel_round_volume,
+            wheel_spin_music=wheel_spin_music,
+            wheel_spin_music_volume=wheel_spin_volume,
+            wheel_summary_music=wheel_summary_music,
+            wheel_summary_music_volume=wheel_summary_volume,
+            wheel_colors=wheel_colors,
             on_transfer=self._on_wheel_transfer,
             on_close=lambda: setattr(self, "wheel_window", None),
         )
@@ -649,6 +717,160 @@ class LotteryApp:
     def _on_wheel_closed(self) -> None:
         self.wheel_window = None
 
+    def _get_wheel_colors(self) -> dict[str, str]:
+        colors = copy.deepcopy(DEFAULT_WHEEL_COLORS)
+        custom = self.config.get("wheel_colors", {})
+        if isinstance(custom, dict):
+            for key, value in custom.items():
+                if value:
+                    colors[key] = value
+        return colors
+
+    def _open_wheel_settings(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("转盘设置")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        single_round_var = tk.BooleanVar(value=bool(self.config.get("wheel_single_round_display", False)))
+        round_music_var = tk.StringVar(value=str(self.config.get("wheel_round_music", "")))
+        round_volume_var = tk.DoubleVar(value=float(self.config.get("wheel_round_music_volume", 0.6) or 0.6))
+        spin_music_var = tk.StringVar(value=str(self.config.get("wheel_spin_music", "")))
+        spin_volume_var = tk.DoubleVar(value=float(self.config.get("wheel_spin_music_volume", 0.6) or 0.6))
+        summary_music_var = tk.StringVar(value=str(self.config.get("wheel_summary_music", "")))
+        summary_volume_var = tk.DoubleVar(value=float(self.config.get("wheel_summary_music_volume", 0.6) or 0.6))
+
+        colors = self._get_wheel_colors()
+        color_vars = {
+            "bg_canvas": tk.StringVar(value=colors["bg_canvas"]),
+            "panel_bg": tk.StringVar(value=colors["panel_bg"]),
+            "panel_border": tk.StringVar(value=colors["panel_border"]),
+            "title_fg": tk.StringVar(value=colors["title_fg"]),
+            "status_fg": tk.StringVar(value=colors["status_fg"]),
+            "text_main": tk.StringVar(value=colors["text_main"]),
+            "text_muted": tk.StringVar(value=colors["text_muted"]),
+            "history_bg": tk.StringVar(value=colors["history_bg"]),
+            "history_fg": tk.StringVar(value=colors["history_fg"]),
+            "winner_bg": tk.StringVar(value=colors["winner_bg"]),
+            "winner_fg": tk.StringVar(value=colors["winner_fg"]),
+        }
+
+        ttk.Checkbutton(dialog, text="抽奖时单轮展示", variable=single_round_var).grid(
+            row=0, column=0, columnspan=3, sticky=tk.W, padx=8, pady=(10, 4)
+        )
+
+        ttk.Label(dialog, text="单轮展示音乐:").grid(row=1, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=round_music_var, width=30).grid(row=1, column=1, sticky=tk.W, pady=6)
+
+        def pick_round_music() -> None:
+            path = filedialog.askopenfilename(
+                title="选择单轮展示音乐",
+                filetypes=[("Audio files", "*.mp3;*.wav;*.ogg"), ("All files", "*.*")],
+            )
+            if path:
+                round_music_var.set(self._relative_or_absolute(Path(path)))
+
+        ttk.Button(dialog, text="选择文件", command=pick_round_music).grid(row=1, column=2, padx=6)
+        ttk.Label(dialog, text="单轮音量:").grid(row=2, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Scale(dialog, from_=0.0, to=1.0, variable=round_volume_var, orient=tk.HORIZONTAL, length=200).grid(
+            row=2, column=1, sticky=tk.W, pady=6
+        )
+
+        ttk.Label(dialog, text="转动音乐:").grid(row=3, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=spin_music_var, width=30).grid(row=3, column=1, sticky=tk.W, pady=6)
+
+        def pick_spin_music() -> None:
+            path = filedialog.askopenfilename(
+                title="选择转动音乐",
+                filetypes=[("Audio files", "*.mp3;*.wav;*.ogg"), ("All files", "*.*")],
+            )
+            if path:
+                spin_music_var.set(self._relative_or_absolute(Path(path)))
+
+        ttk.Button(dialog, text="选择文件", command=pick_spin_music).grid(row=3, column=2, padx=6)
+        ttk.Label(dialog, text="转动音量:").grid(row=4, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Scale(dialog, from_=0.0, to=1.0, variable=spin_volume_var, orient=tk.HORIZONTAL, length=200).grid(
+            row=4, column=1, sticky=tk.W, pady=6
+        )
+
+        ttk.Label(dialog, text="总展示音乐:").grid(row=5, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=summary_music_var, width=30).grid(row=5, column=1, sticky=tk.W, pady=6)
+
+        def pick_summary_music() -> None:
+            path = filedialog.askopenfilename(
+                title="选择总展示音乐",
+                filetypes=[("Audio files", "*.mp3;*.wav;*.ogg"), ("All files", "*.*")],
+            )
+            if path:
+                summary_music_var.set(self._relative_or_absolute(Path(path)))
+
+        ttk.Button(dialog, text="选择文件", command=pick_summary_music).grid(row=5, column=2, padx=6)
+        ttk.Label(dialog, text="总展示音量:").grid(row=6, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Scale(dialog, from_=0.0, to=1.0, variable=summary_volume_var, orient=tk.HORIZONTAL, length=200).grid(
+            row=6, column=1, sticky=tk.W, pady=6
+        )
+
+        ttk.Separator(dialog).grid(row=7, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
+
+        color_labels = [
+            ("画布背景", "bg_canvas"),
+            ("面板背景", "panel_bg"),
+            ("面板边框", "panel_border"),
+            ("标题字体", "title_fg"),
+            ("状态字体", "status_fg"),
+            ("正文字体", "text_main"),
+            ("提示字体", "text_muted"),
+            ("历史榜单背景", "history_bg"),
+            ("历史榜单字体", "history_fg"),
+            ("本轮名单背景", "winner_bg"),
+            ("本轮名单字体", "winner_fg"),
+        ]
+        start_row = 8
+        for idx, (label, key) in enumerate(color_labels):
+            row = start_row + idx
+            ttk.Label(dialog, text=f"{label}:").grid(row=row, column=0, sticky=tk.W, padx=8, pady=4)
+            ttk.Entry(dialog, textvariable=color_vars[key], width=18).grid(row=row, column=1, sticky=tk.W, pady=4)
+
+            def make_picker(var: tk.StringVar) -> Callable[[], None]:
+                def _pick() -> None:
+                    color = colorchooser.askcolor(color=var.get(), parent=dialog)
+                    if color and color[1]:
+                        var.set(color[1])
+
+                return _pick
+
+            ttk.Button(dialog, text="选择颜色", command=make_picker(color_vars[key])).grid(
+                row=row, column=2, padx=6, pady=4
+            )
+
+        def save_settings() -> None:
+            self.config["wheel_single_round_display"] = bool(single_round_var.get())
+            self.config["wheel_round_music"] = round_music_var.get().strip()
+            self.config["wheel_round_music_volume"] = float(round_volume_var.get())
+            self.config["wheel_spin_music"] = spin_music_var.get().strip()
+            self.config["wheel_spin_music_volume"] = float(spin_volume_var.get())
+            self.config["wheel_summary_music"] = summary_music_var.get().strip()
+            self.config["wheel_summary_music_volume"] = float(summary_volume_var.get())
+            self.config["wheel_colors"] = {key: var.get().strip() for key, var in color_vars.items()}
+            self._save_config_file()
+            wheel_window = getattr(self, "wheel_window", None)
+            if wheel_window and wheel_window.winfo_exists():
+                wheel_window.update_settings(
+                    single_round_display=self.config["wheel_single_round_display"],
+                    round_music_path=self.config["wheel_round_music"] or None,
+                    round_music_volume=self.config["wheel_round_music_volume"],
+                    spin_music_path=self.config["wheel_spin_music"] or None,
+                    spin_music_volume=self.config["wheel_spin_music_volume"],
+                    summary_music_path=self.config["wheel_summary_music"] or None,
+                    summary_music_volume=self.config["wheel_summary_music_volume"],
+                    colors=self._get_wheel_colors(),
+                )
+            dialog.destroy()
+
+        ttk.Button(dialog, text="保存", command=save_settings).grid(
+            row=start_row + len(color_labels), column=0, columnspan=3, pady=(10, 12)
+        )
+
     def _open_visual_window(self) -> None:
         if self.visual_window and self.visual_window.winfo_exists():
             self.visual_window.lift()
@@ -665,6 +887,8 @@ class LotteryApp:
                 return
             prize = available[0]
         excluded_ids = self._current_excluded_ids()
+        include_excluded = self._include_excluded_list()
+        excluded_range = self._get_excluded_winner_range()
         background_color = str(self.config.get("visual_background_color", "#0b0f1c"))
         background_path = self.config.get("visual_background") or None
         background_music_path = self.config.get("visual_music") or None
@@ -684,6 +908,8 @@ class LotteryApp:
             self.state,
             self.global_must_win,
             excluded_ids,
+            include_excluded,
+            excluded_range,
             background_color,
             background_path,
             background_music_path,
@@ -983,8 +1209,23 @@ class LotteryApp:
             messagebox.showerror("错误", "奖项不存在。")
             return
         excluded_ids = self._current_excluded_ids()
+        include_excluded = self._include_excluded_list()
+        excluded_range = self._get_excluded_winner_range()
         preview_state = copy.deepcopy(self.state)
-        self.pending_winners = draw_prize(prize, self.people, preview_state, self.global_must_win, excluded_ids)
+        try:
+            self.pending_winners = draw_prize(
+                prize,
+                self.people,
+                preview_state,
+                self.global_must_win,
+                excluded_ids,
+                include_excluded=include_excluded,
+                excluded_winner_range=excluded_range,
+                prizes=self.prizes,
+            )
+        except ValueError as exc:
+            messagebox.showerror("抽奖失败", str(exc))
+            return
         self.pending_state = preview_state
         if not self.pending_winners:
             messagebox.showinfo("结果", "本次未抽出新的中奖名单。")
@@ -1065,9 +1306,43 @@ class LotteryApp:
             )
 
     def _current_excluded_ids(self) -> set[str]:
-        if self.include_excluded_var.get():
-            return set()
         return {person.person_id for person in self.excluded_people}
+
+    def _include_excluded_list(self) -> bool:
+        return self.include_excluded_var.get()
+
+    def _validate_range_entry(self, value: str) -> bool:
+        return value.isdigit() or value == ""
+
+    def _handle_excluded_range_change(self, event: tk.Event | None = None) -> None:
+        try:
+            min_value, max_value = self._parse_excluded_range()
+        except ValueError as exc:
+            messagebox.showerror("范围错误", str(exc))
+            current_min = self.config.get("excluded_winners_min")
+            current_max = self.config.get("excluded_winners_max")
+            self.excluded_min_var.set("" if current_min is None else str(current_min))
+            self.excluded_max_var.set("" if current_max is None else str(current_max))
+            return
+        self.config["excluded_winners_min"] = min_value
+        self.config["excluded_winners_max"] = max_value
+        self._save_config_file()
+
+    def _parse_excluded_range(self) -> tuple[int | None, int | None]:
+        raw_min = self.excluded_min_var.get().strip()
+        raw_max = self.excluded_max_var.get().strip()
+        min_value = int(raw_min) if raw_min else None
+        max_value = int(raw_max) if raw_max else None
+        if min_value is not None and min_value < 0:
+            raise ValueError("排除名单最小中奖人数不能为负数。")
+        if max_value is not None and max_value < 0:
+            raise ValueError("排除名单最大中奖人数不能为负数。")
+        if min_value is not None and max_value is not None and max_value < min_value:
+            raise ValueError("排除名单最大中奖人数不能小于最小值。")
+        return min_value, max_value
+
+    def _get_excluded_winner_range(self) -> tuple[int | None, int | None]:
+        return self.config.get("excluded_winners_min"), self.config.get("excluded_winners_max")
 
     def _persist_state(self) -> None:
         save_state(self.state_path, self.state)
@@ -1094,7 +1369,23 @@ class LotteryApp:
             return
 
         excluded_ids = self._current_excluded_ids()
-        selected = draw_prize(prize, self.people, self.state, self.global_must_win, excluded_ids)
+        include_excluded = self._include_excluded_list()
+        excluded_range = self._get_excluded_winner_range()
+        try:
+            selected = draw_prize(
+                prize,
+                self.people,
+                self.state,
+                self.global_must_win,
+                excluded_ids,
+                include_excluded=include_excluded,
+                excluded_winner_range=excluded_range,
+                prizes=self.prizes,
+                draw_count=1,
+            )
+        except ValueError as exc:
+            messagebox.showerror("抽奖失败", str(exc))
+            return
         self._persist_state()
         self._refresh_prizes()
 
@@ -1114,8 +1405,25 @@ class LotteryApp:
             return
         selected_total = []
         excluded_ids = self._current_excluded_ids()
-        for prize in self.prizes:
-            selected_total.extend(draw_prize(prize, self.people, self.state, self.global_must_win, excluded_ids))
+        include_excluded = self._include_excluded_list()
+        excluded_range = self._get_excluded_winner_range()
+        try:
+            for prize in self.prizes:
+                selected_total.extend(
+                    draw_prize(
+                        prize,
+                        self.people,
+                        self.state,
+                        self.global_must_win,
+                        excluded_ids,
+                        include_excluded=include_excluded,
+                        excluded_winner_range=excluded_range,
+                        prizes=self.prizes,
+                    )
+                )
+        except ValueError as exc:
+            messagebox.showerror("抽奖失败", str(exc))
+            return
         self._persist_state()
         self._refresh_prizes()
         if not selected_total:
@@ -1126,6 +1434,14 @@ class LotteryApp:
             self._append_output(
                 f"- {entry['prize_name']} | {entry['person_name']} ({entry['person_id']}) [{entry['source']}]"
             )
+        excluded_range = self._get_excluded_winner_range()
+        min_value, max_value = excluded_range
+        if (min_value is not None or max_value is not None) and not include_excluded:
+            range_label = f"{min_value or 0}~{max_value if max_value is not None else '不限'}"
+            excluded_total = sum(
+                1 for winner in self.state["winners"] if winner["person_id"] in excluded_ids
+            )
+            self._append_output(f"排除名单中奖人数(全部奖项): {excluded_total}，范围: {range_label}")
 
     def _reset_results(self) -> None:
         if not messagebox.askyesno("确认", "确定要清空所有中奖结果吗？"):
@@ -1163,6 +1479,10 @@ class LotteryApp:
         self.excluded_path_var.set(str(self.excluded_file))
         self.output_dir_var.set(str(self.output_dir))
         self.config_path_var.set(str(self.config_path))
+        excluded_min = self.config.get("excluded_winners_min")
+        excluded_max = self.config.get("excluded_winners_max")
+        self.excluded_min_var.set("" if excluded_min is None else str(excluded_min))
+        self.excluded_max_var.set("" if excluded_max is None else str(excluded_max))
         self._update_login_state()
         self._refresh_people_tree()
         self._refresh_prizes_tree()
@@ -1298,7 +1618,7 @@ class LotteryApp:
             ttk.Checkbutton(dialog, text="排除保底名单", variable=exclude_must_win_var).grid(
                 row=5, column=0, columnspan=2, sticky=tk.W, padx=10
             )
-            ttk.Checkbutton(dialog, text="排除排查名单", variable=exclude_excluded_var).grid(
+            ttk.Checkbutton(dialog, text="应用排除名单", variable=exclude_excluded_var).grid(
                 row=6, column=0, columnspan=2, sticky=tk.W, padx=10
             )
 
@@ -1424,7 +1744,7 @@ class LotteryApp:
             self.people_tree.selection_set(str(index + 1))
 
     def _add_excluded(self) -> None:
-        result = self._open_person_dialog("新增排查人员")
+        result = self._open_person_dialog("新增排除人员")
         if result is None:
             return
         new_data = [*self.excluded_data, result]
@@ -1433,9 +1753,9 @@ class LotteryApp:
     def _edit_excluded(self) -> None:
         index = self._selected_index(self.excluded_tree)
         if index is None:
-            messagebox.showwarning("提示", "请选择需要修改的排查人员。")
+            messagebox.showwarning("提示", "请选择需要修改的排除人员。")
             return
-        result = self._open_person_dialog("修改排查人员", self.excluded_data[index])
+        result = self._open_person_dialog("修改排除人员", self.excluded_data[index])
         if result is None:
             return
         new_data = self.excluded_data.copy()
@@ -1445,7 +1765,7 @@ class LotteryApp:
     def _delete_excluded(self) -> None:
         index = self._selected_index(self.excluded_tree)
         if index is None:
-            messagebox.showwarning("提示", "请选择需要删除的排查人员。")
+            messagebox.showwarning("提示", "请选择需要删除的排除人员。")
             return
         new_data = self.excluded_data.copy()
         del new_data[index]
@@ -1540,7 +1860,7 @@ class LotteryApp:
             return
         write_people_data(self.excluded_file, self.excluded_data)
         self.excluded_people = parse_people_entries(self.excluded_data)
-        messagebox.showinfo("成功", "排查名单已保存。")
+        messagebox.showinfo("成功", "排除名单已保存。")
 
     def _import_people(self) -> None:
         path = filedialog.askopenfilename(
@@ -1606,7 +1926,7 @@ class LotteryApp:
 
     def _import_excluded(self) -> None:
         path = filedialog.askopenfilename(
-            title="选择要导入的排查名单",
+            title="选择要导入的排除名单",
             filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")],
         )
         if not path:

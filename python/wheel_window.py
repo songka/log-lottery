@@ -10,16 +10,46 @@ Wheel-based lottery window with Ping-Pong Auto-Scroll and Manual-Start Prize Swi
 
 from __future__ import annotations
 
+import copy
 import threading
 import tkinter as tk
+from pathlib import Path
 from typing import Any, Callable
 
+import pygame
+
+from lottery import resolve_path
 from wheel_window_logic import WheelWindowLogic
 from wheel_window_particles import WheelWindowParticles
 from wheel_window_prize import WheelWindowPrize
 from wheel_window_render import WheelWindowRender
 from wheel_window_scroll import WheelWindowScroll
 from wheel_window_ui import WheelWindowUI
+
+
+DEFAULT_WHEEL_COLORS = {
+    "bg_canvas": "#4A0C0C",
+    "panel_bg": "#5C1010",
+    "panel_border": "#8B1A1A",
+    "gold": "#F7D774",
+    "gold_deep": "#D9A441",
+    "white": "#FFF8E7",
+    "red": "#E53935",
+    "red_deep": "#B71C1C",
+    "accent": "#FFD700",
+    "text_main": "#FFF8E7",
+    "text_muted": "#F6D9B8",
+    "title_fg": "#F7D774",
+    "status_fg": "#F7D774",
+    "history_bg": "#7A1616",
+    "history_fg": "#FFF8E7",
+    "winner_bg": "#7A1616",
+    "winner_fg": "#FFF8E7",
+    "combo_bg": "#7A1616",
+    "combo_border": "#8B1A1A",
+    "combo_fg": "#FFF8E7",
+    "combo_arrow": "#FFF8E7",
+}
 
 
 class WheelLotteryWindow(
@@ -36,21 +66,35 @@ class WheelLotteryWindow(
     def __init__(
         self,
         root: tk.Tk,
+        base_dir: Path,
         prizes: list[Any],
         people: list[Any],
         state: dict[str, Any],
         global_must_win: set[str],
         excluded_ids: set[str] | list[Any],
+        include_excluded: bool,
+        excluded_winner_range: tuple[int | None, int | None] | None,
+        wheel_single_round_display: bool,
+        wheel_round_music: str | None,
+        wheel_round_music_volume: float,
+        wheel_spin_music: str | None,
+        wheel_spin_music_volume: float,
+        wheel_summary_music: str | None,
+        wheel_summary_music_volume: float,
+        wheel_colors: dict[str, str] | None,
         on_transfer: Callable[[dict[str, Any], list[dict[str, Any]]], None],
         on_close: Callable[[], None],
     ) -> None:
         super().__init__(root)
         self.root = root
+        self.base_dir = base_dir
         self.prizes = prizes
         self.people = people
         self.lottery_state = state 
         self.global_must_win = global_must_win
         self.excluded_ids = excluded_ids
+        self.include_excluded = include_excluded
+        self.excluded_winner_range = excluded_winner_range
         self.on_transfer = on_transfer
         self.on_close = on_close
 
@@ -62,26 +106,26 @@ class WheelLotteryWindow(
         self.normal_geometry = ""
         
         # --- 配色方案 (喜庆红金主题) ---  # Bug5: 替换整体 UI 为红金风格
-        self.colors = {
-            "bg_canvas": "#4A0C0C",
-            "panel_bg": "#5C1010",
-            "panel_border": "#8B1A1A",
-            "gold": "#F7D774",
-            "gold_deep": "#D9A441",
-            "white": "#FFF8E7",
-            "red": "#E53935",
-            "red_deep": "#B71C1C",
-            "accent": "#FFD700",
-            "text_main": "#FFF8E7",
-            "text_muted": "#F6D9B8",
-            "wheel_colors": ["#E53935", "#C62828", "#F4C542", "#FF8A65", "#FFD54F"],
-        }
+        self.colors = copy.deepcopy(DEFAULT_WHEEL_COLORS)
+        if wheel_colors:
+            self.colors.update({key: value for key, value in wheel_colors.items() if value})
+        self.colors["wheel_colors"] = ["#E53935", "#C62828", "#F4C542", "#FF8A65", "#FFD54F"]
         self.configure(bg=self.colors["panel_bg"])
 
         # 变量
         self.title_text_var = tk.StringVar(value="✨ 2025 LFAF尾牙 ✨")
         self.prize_var = tk.StringVar()
         self.result_var = tk.StringVar(value="等待蓄力...")
+
+        self.single_round_display = wheel_single_round_display
+        self.round_music_path = wheel_round_music
+        self.round_music_volume = float(wheel_round_music_volume)
+        self.spin_music_path = wheel_spin_music
+        self.spin_music_volume = float(wheel_spin_music_volume)
+        self.summary_music_path = wheel_summary_music
+        self.summary_music_volume = float(wheel_summary_music_volume)
+        self.music_ready = False
+        self.current_music_mode: str | None = None
         
         # --- 核心状态 ---
         self.phase = "idle" 
@@ -179,3 +223,80 @@ class WheelLotteryWindow(
         self._refresh_history_list() 
         self._animate()
         self._start_auto_scroll() 
+        self._init_audio()
+
+    def update_settings(
+        self,
+        single_round_display: bool,
+        round_music_path: str | None,
+        round_music_volume: float,
+        spin_music_path: str | None,
+        spin_music_volume: float,
+        summary_music_path: str | None,
+        summary_music_volume: float,
+        colors: dict[str, str],
+    ) -> None:
+        self.single_round_display = bool(single_round_display)
+        self.round_music_path = round_music_path
+        self.round_music_volume = float(round_music_volume)
+        self.spin_music_path = spin_music_path
+        self.spin_music_volume = float(spin_music_volume)
+        self.summary_music_path = summary_music_path
+        self.summary_music_volume = float(summary_music_volume)
+        self.colors.update(colors)
+        self.configure(bg=self.colors["panel_bg"])
+        if hasattr(self, "_apply_color_theme"):
+            self._apply_color_theme()
+        self._request_render(force=True)
+        self._init_audio()
+        if self.current_music_mode == "summary":
+            self._play_summary_music()
+        elif self.current_music_mode == "round":
+            self._play_round_music()
+
+    def _init_audio(self) -> None:
+        if not self.round_music_path and not self.summary_music_path and not self.spin_music_path:
+            return
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            self.music_ready = True
+        except pygame.error:
+            self.music_ready = False
+
+    def _play_music(self, path: str | None, volume: float, mode: str) -> None:
+        if not self.music_ready:
+            return
+        if not path:
+            self._stop_music()
+            return
+        if self.current_music_mode == mode:
+            return
+        music_path = resolve_path(self.base_dir, path)
+        if not music_path.exists():
+            return
+        try:
+            pygame.mixer.music.load(str(music_path))
+            pygame.mixer.music.set_volume(max(0.0, min(volume, 1.0)))
+            pygame.mixer.music.play(-1)
+            self.current_music_mode = mode
+        except pygame.error:
+            self.music_ready = False
+
+    def _play_round_music(self) -> None:
+        self._play_music(self.round_music_path, self.round_music_volume, "round")
+
+    def _play_summary_music(self) -> None:
+        self._play_music(self.summary_music_path, self.summary_music_volume, "summary")
+
+    def _play_spin_music(self) -> None:
+        self._play_music(self.spin_music_path, self.spin_music_volume, "spin")
+
+    def _stop_music(self) -> None:
+        if not self.music_ready:
+            return
+        try:
+            pygame.mixer.music.stop()
+        except pygame.error:
+            pass
+        self.current_music_mode = None

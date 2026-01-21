@@ -58,6 +58,8 @@ class WheelWindowLogic:
             self.result_var.set("⚡ 能量注入中...")
             self._update_btn_state()
             if not self.target_queue:
+                if getattr(self, "single_round_display", False):
+                    self._reset_round_display()
                 self._start_draw_logic() 
 
     def _on_input_up(self):
@@ -66,6 +68,8 @@ class WheelWindowLogic:
             self.phase = "spinning"
             self.is_auto_playing = True 
             #self._reset_round_display()
+            if hasattr(self, "_play_spin_music"):
+                self._play_spin_music()
             # --- 核心：时间物理参数初始化 ---
             self.locked_charge = self.charge_power 
             self._init_time_physics(self.locked_charge)
@@ -122,11 +126,10 @@ class WheelWindowLogic:
 
         clean_excluded_ids = set()
         for item in self.excluded_ids:
-            if hasattr(item, 'person_id'): clean_excluded_ids.add(str(item.person_id))
-            else: clean_excluded_ids.add(str(item))
-        if prize.exclude_previous_winners:
-            already_won_ids = {str(winner["person_id"]) for winner in self.lottery_state.get("winners", [])}
-            clean_excluded_ids |= already_won_ids
+            if hasattr(item, "person_id"):
+                clean_excluded_ids.add(str(item.person_id))
+            else:
+                clean_excluded_ids.add(str(item))
 
         remaining = remaining_slots(prize, self.lottery_state)
         if remaining <= 0:
@@ -134,7 +137,22 @@ class WheelWindowLogic:
 
         preview_state = copy.deepcopy(self.lottery_state)
         # Bug2: 一次性抽完当前奖项剩余名额，进入自动连抽队列
-        winners = draw_prize(prize, self.people, preview_state, self.global_must_win, clean_excluded_ids)
+        try:
+            winners = draw_prize(
+                prize,
+                self.people,
+                preview_state,
+                self.global_must_win,
+                clean_excluded_ids,
+                include_excluded=self.include_excluded,
+                excluded_winner_range=self.excluded_winner_range,
+                prizes=self.prizes,
+                draw_count=1,
+            )
+        except ValueError as exc:
+            self.phase = "idle"
+            messagebox.showinfo("结果", str(exc))
+            return
 
         if not winners:
             self.phase = "idle"
@@ -179,10 +197,15 @@ class WheelWindowLogic:
         previous_winners_set = {str(w["person_id"]) for w in self.lottery_state["winners"]} if prize.exclude_previous_winners else set()
         clean_excluded_ids = set()
         for item in self.excluded_ids:
-            if hasattr(item, 'person_id'): clean_excluded_ids.add(str(item.person_id))
-            else: clean_excluded_ids.add(str(item))
+            if hasattr(item, "person_id"):
+                clean_excluded_ids.add(str(item.person_id))
+            else:
+                clean_excluded_ids.add(str(item))
+        exclude_excluded_list = prize.exclude_excluded_list and not self.include_excluded
 
-        blacklist = clean_excluded_ids | excluded_must_win | previous_winners_set | existing_prize_winners
+        blacklist = excluded_must_win | previous_winners_set | existing_prize_winners
+        if exclude_excluded_list:
+            blacklist |= clean_excluded_ids
         
         eligible = []
         for p in self.people:
@@ -424,6 +447,8 @@ class WheelWindowLogic:
             prize_label = "奖品"
 
         # Bug3: 先播报，播报结束后再进入 removing 动画
+        if hasattr(self, "_stop_music"):
+            self._stop_music()
         self._speak_winner("", winner_data.get("id", ""), winner_data.get("name", ""), prize_label)
         self.pending_removal_data = winner_data
         self.pending_removal_idx = winner_data.get("index", -1)
@@ -484,6 +509,8 @@ class WheelWindowLogic:
         if self.post_removal_phase == "auto_wait":
             self.post_removal_phase = None
             self.phase = "auto_wait"
+            if hasattr(self, "_play_round_music"):
+                self._play_round_music()
             self._update_btn_state()
             return
         self.post_removal_phase = None
