@@ -223,6 +223,7 @@ class WheelLotteryWindow(
         
         self._build_ui()
         self._bind_controls()
+        self.protocol("WM_DELETE_WINDOW", self._handle_close)
         self._refresh_prize_options(hide_completed=True)
         self._refresh_history_list() 
         self._animate()
