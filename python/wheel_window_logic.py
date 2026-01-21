@@ -113,6 +113,8 @@ class WheelWindowLogic:
         prize_label = self.prize_var.get().strip()
         if not prize_label:
             return
+        if hasattr(self, "_play_round_music"):
+            self._play_round_music()
         if not self.wheel_names:
             self._prepare_wheel()
             if not self.wheel_names:
@@ -430,6 +432,9 @@ class WheelWindowLogic:
             return
         info = winner_data['full_text']
         winner_entry = self.pending_winners.pop(0) if self.pending_winners else None
+        if getattr(self, "single_round_display", False):
+            self.revealed_winners = []
+            self.winner_listbox.delete(0, tk.END)
         self.revealed_winners.append(info)
         self.winner_listbox.insert(tk.END, f"🏆 {info}")
         self.winner_listbox.see(tk.END) 
