@@ -107,6 +107,8 @@ class WheelWindowLogic:
         self.is_auto_playing = False   
         self.current_speed = 0.0       
         self.result_var.set("⏸ 已暂停")
+        if hasattr(self, "_stop_music"):
+            self._stop_music()
         self._update_btn_state()
 
     def _start_draw_logic(self) -> None:
