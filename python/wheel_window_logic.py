@@ -58,6 +58,8 @@ class WheelWindowLogic:
             self.result_var.set("⚡ 能量注入中...")
             self._update_btn_state()
             if not self.target_queue:
+                if getattr(self, "single_round_display", False):
+                    self._reset_round_display()
                 self._start_draw_logic() 
 
     def _on_input_up(self):
@@ -66,6 +68,8 @@ class WheelWindowLogic:
             self.phase = "spinning"
             self.is_auto_playing = True 
             #self._reset_round_display()
+            if hasattr(self, "_play_spin_music"):
+                self._play_spin_music()
             # --- 核心：时间物理参数初始化 ---
             self.locked_charge = self.charge_power 
             self._init_time_physics(self.locked_charge)
@@ -448,6 +452,8 @@ class WheelWindowLogic:
             prize_label = "奖品"
 
         # Bug3: 先播报，播报结束后再进入 removing 动画
+        if hasattr(self, "_stop_music"):
+            self._stop_music()
         self._speak_winner("", winner_data.get("id", ""), winner_data.get("name", ""), prize_label)
         self.pending_removal_data = winner_data
         self.pending_removal_idx = winner_data.get("index", -1)
@@ -508,6 +514,8 @@ class WheelWindowLogic:
         if self.post_removal_phase == "auto_wait":
             self.post_removal_phase = None
             self.phase = "auto_wait"
+            if hasattr(self, "_play_round_music"):
+                self._play_round_music()
             self._update_btn_state()
             return
         self.post_removal_phase = None

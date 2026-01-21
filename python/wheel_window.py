@@ -77,6 +77,8 @@ class WheelLotteryWindow(
         wheel_single_round_display: bool,
         wheel_round_music: str | None,
         wheel_round_music_volume: float,
+        wheel_spin_music: str | None,
+        wheel_spin_music_volume: float,
         wheel_summary_music: str | None,
         wheel_summary_music_volume: float,
         wheel_colors: dict[str, str] | None,
@@ -118,6 +120,8 @@ class WheelLotteryWindow(
         self.single_round_display = wheel_single_round_display
         self.round_music_path = wheel_round_music
         self.round_music_volume = float(wheel_round_music_volume)
+        self.spin_music_path = wheel_spin_music
+        self.spin_music_volume = float(wheel_spin_music_volume)
         self.summary_music_path = wheel_summary_music
         self.summary_music_volume = float(wheel_summary_music_volume)
         self.music_ready = False
@@ -226,6 +230,8 @@ class WheelLotteryWindow(
         single_round_display: bool,
         round_music_path: str | None,
         round_music_volume: float,
+        spin_music_path: str | None,
+        spin_music_volume: float,
         summary_music_path: str | None,
         summary_music_volume: float,
         colors: dict[str, str],
@@ -233,6 +239,8 @@ class WheelLotteryWindow(
         self.single_round_display = bool(single_round_display)
         self.round_music_path = round_music_path
         self.round_music_volume = float(round_music_volume)
+        self.spin_music_path = spin_music_path
+        self.spin_music_volume = float(spin_music_volume)
         self.summary_music_path = summary_music_path
         self.summary_music_volume = float(summary_music_volume)
         self.colors.update(colors)
@@ -247,7 +255,7 @@ class WheelLotteryWindow(
             self._play_round_music()
 
     def _init_audio(self) -> None:
-        if not self.round_music_path and not self.summary_music_path:
+        if not self.round_music_path and not self.summary_music_path and not self.spin_music_path:
             return
         try:
             if not pygame.mixer.get_init():
@@ -280,6 +288,9 @@ class WheelLotteryWindow(
 
     def _play_summary_music(self) -> None:
         self._play_music(self.summary_music_path, self.summary_music_volume, "summary")
+
+    def _play_spin_music(self) -> None:
+        self._play_music(self.spin_music_path, self.spin_music_volume, "spin")
 
     def _stop_music(self) -> None:
         if not self.music_ready:

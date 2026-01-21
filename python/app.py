@@ -123,6 +123,8 @@ class LotteryApp:
         config.setdefault("wheel_single_round_display", False)
         config.setdefault("wheel_round_music", "")
         config.setdefault("wheel_round_music_volume", 0.6)
+        config.setdefault("wheel_spin_music", "")
+        config.setdefault("wheel_spin_music_volume", 0.6)
         config.setdefault("wheel_summary_music", "")
         config.setdefault("wheel_summary_music_volume", 0.6)
         config.setdefault("wheel_colors", copy.deepcopy(DEFAULT_WHEEL_COLORS))
@@ -152,6 +154,8 @@ class LotteryApp:
                 "wheel_single_round_display": False,
                 "wheel_round_music": "",
                 "wheel_round_music_volume": 0.6,
+                "wheel_spin_music": "",
+                "wheel_spin_music_volume": 0.6,
                 "wheel_summary_music": "",
                 "wheel_summary_music_volume": 0.6,
                 "wheel_colors": copy.deepcopy(DEFAULT_WHEEL_COLORS),
@@ -654,6 +658,8 @@ class LotteryApp:
         wheel_single_round = bool(self.config.get("wheel_single_round_display", False))
         wheel_round_music = self.config.get("wheel_round_music") or None
         wheel_round_volume = float(self.config.get("wheel_round_music_volume", 0.6) or 0.6)
+        wheel_spin_music = self.config.get("wheel_spin_music") or None
+        wheel_spin_volume = float(self.config.get("wheel_spin_music_volume", 0.6) or 0.6)
         wheel_summary_music = self.config.get("wheel_summary_music") or None
         wheel_summary_volume = float(self.config.get("wheel_summary_music_volume", 0.6) or 0.6)
 
@@ -670,6 +676,8 @@ class LotteryApp:
             wheel_single_round_display=wheel_single_round,
             wheel_round_music=wheel_round_music,
             wheel_round_music_volume=wheel_round_volume,
+            wheel_spin_music=wheel_spin_music,
+            wheel_spin_music_volume=wheel_spin_volume,
             wheel_summary_music=wheel_summary_music,
             wheel_summary_music_volume=wheel_summary_volume,
             wheel_colors=wheel_colors,
@@ -727,6 +735,8 @@ class LotteryApp:
         single_round_var = tk.BooleanVar(value=bool(self.config.get("wheel_single_round_display", False)))
         round_music_var = tk.StringVar(value=str(self.config.get("wheel_round_music", "")))
         round_volume_var = tk.DoubleVar(value=float(self.config.get("wheel_round_music_volume", 0.6) or 0.6))
+        spin_music_var = tk.StringVar(value=str(self.config.get("wheel_spin_music", "")))
+        spin_volume_var = tk.DoubleVar(value=float(self.config.get("wheel_spin_music_volume", 0.6) or 0.6))
         summary_music_var = tk.StringVar(value=str(self.config.get("wheel_summary_music", "")))
         summary_volume_var = tk.DoubleVar(value=float(self.config.get("wheel_summary_music_volume", 0.6) or 0.6))
 
@@ -766,8 +776,25 @@ class LotteryApp:
             row=2, column=1, sticky=tk.W, pady=6
         )
 
-        ttk.Label(dialog, text="总展示音乐:").grid(row=3, column=0, sticky=tk.W, padx=8, pady=6)
-        ttk.Entry(dialog, textvariable=summary_music_var, width=30).grid(row=3, column=1, sticky=tk.W, pady=6)
+        ttk.Label(dialog, text="转动音乐:").grid(row=3, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=spin_music_var, width=30).grid(row=3, column=1, sticky=tk.W, pady=6)
+
+        def pick_spin_music() -> None:
+            path = filedialog.askopenfilename(
+                title="选择转动音乐",
+                filetypes=[("Audio files", "*.mp3;*.wav;*.ogg"), ("All files", "*.*")],
+            )
+            if path:
+                spin_music_var.set(self._relative_or_absolute(Path(path)))
+
+        ttk.Button(dialog, text="选择文件", command=pick_spin_music).grid(row=3, column=2, padx=6)
+        ttk.Label(dialog, text="转动音量:").grid(row=4, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Scale(dialog, from_=0.0, to=1.0, variable=spin_volume_var, orient=tk.HORIZONTAL, length=200).grid(
+            row=4, column=1, sticky=tk.W, pady=6
+        )
+
+        ttk.Label(dialog, text="总展示音乐:").grid(row=5, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=summary_music_var, width=30).grid(row=5, column=1, sticky=tk.W, pady=6)
 
         def pick_summary_music() -> None:
             path = filedialog.askopenfilename(
@@ -777,13 +804,13 @@ class LotteryApp:
             if path:
                 summary_music_var.set(self._relative_or_absolute(Path(path)))
 
-        ttk.Button(dialog, text="选择文件", command=pick_summary_music).grid(row=3, column=2, padx=6)
-        ttk.Label(dialog, text="总展示音量:").grid(row=4, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Button(dialog, text="选择文件", command=pick_summary_music).grid(row=5, column=2, padx=6)
+        ttk.Label(dialog, text="总展示音量:").grid(row=6, column=0, sticky=tk.W, padx=8, pady=6)
         ttk.Scale(dialog, from_=0.0, to=1.0, variable=summary_volume_var, orient=tk.HORIZONTAL, length=200).grid(
-            row=4, column=1, sticky=tk.W, pady=6
+            row=6, column=1, sticky=tk.W, pady=6
         )
 
-        ttk.Separator(dialog).grid(row=5, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
+        ttk.Separator(dialog).grid(row=7, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
 
         color_labels = [
             ("画布背景", "bg_canvas"),
@@ -798,7 +825,7 @@ class LotteryApp:
             ("本轮名单背景", "winner_bg"),
             ("本轮名单字体", "winner_fg"),
         ]
-        start_row = 6
+        start_row = 8
         for idx, (label, key) in enumerate(color_labels):
             row = start_row + idx
             ttk.Label(dialog, text=f"{label}:").grid(row=row, column=0, sticky=tk.W, padx=8, pady=4)
@@ -820,6 +847,8 @@ class LotteryApp:
             self.config["wheel_single_round_display"] = bool(single_round_var.get())
             self.config["wheel_round_music"] = round_music_var.get().strip()
             self.config["wheel_round_music_volume"] = float(round_volume_var.get())
+            self.config["wheel_spin_music"] = spin_music_var.get().strip()
+            self.config["wheel_spin_music_volume"] = float(spin_volume_var.get())
             self.config["wheel_summary_music"] = summary_music_var.get().strip()
             self.config["wheel_summary_music_volume"] = float(summary_volume_var.get())
             self.config["wheel_colors"] = {key: var.get().strip() for key, var in color_vars.items()}
@@ -830,6 +859,8 @@ class LotteryApp:
                     single_round_display=self.config["wheel_single_round_display"],
                     round_music_path=self.config["wheel_round_music"] or None,
                     round_music_volume=self.config["wheel_round_music_volume"],
+                    spin_music_path=self.config["wheel_spin_music"] or None,
+                    spin_music_volume=self.config["wheel_spin_music_volume"],
                     summary_music_path=self.config["wheel_summary_music"] or None,
                     summary_music_volume=self.config["wheel_summary_music_volume"],
                     colors=self._get_wheel_colors(),

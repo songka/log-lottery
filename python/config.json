@@ -11,6 +11,8 @@
   "wheel_single_round_display": false,
   "wheel_round_music": "",
   "wheel_round_music_volume": 0.6,
+  "wheel_spin_music": "",
+  "wheel_spin_music_volume": 0.6,
   "wheel_summary_music": "",
   "wheel_summary_music_volume": 0.6,
   "wheel_colors": {
