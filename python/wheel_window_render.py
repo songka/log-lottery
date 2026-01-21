@@ -211,8 +211,8 @@ class WheelWindowRender:
             
             # 文字角度修正，防止倒立
             text_angle = mid_angle
-            if 90 < mid_angle < 270:
-                text_angle += 180
+            # if 90 < mid_angle < 270:
+                # text_angle += 180
             
             text_ids = item.get("text_ids")
             
