@@ -27,6 +27,12 @@ python app.py
 - `excluded_winners_min`：排除名单最小中奖人数（填 `0` 或 `null` 表示不限制）。
 - `excluded_winners_max`：排除名单最大中奖人数（填 `null` 表示不限制）。
   - 该范围统计覆盖所有奖项（包含保底中奖名单）。
+- `wheel_single_round_display`：转盘抽奖是否启用单轮展示（`true` 表示每次抽奖只保留本轮名单）。
+- `wheel_round_music`：转盘单轮展示音乐文件路径（为空表示不播放）。
+- `wheel_round_music_volume`：转盘单轮展示音乐音量（`0.0` ~ `1.0`）。
+- `wheel_summary_music`：转盘总展示音乐文件路径（为空表示不播放）。
+- `wheel_summary_music_volume`：转盘总展示音乐音量（`0.0` ~ `1.0`）。
+- `wheel_colors`：转盘界面配色（背景/字体/列表等颜色），键值可参考默认配置文件。
 
 ## 目录结构
 

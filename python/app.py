@@ -13,10 +13,10 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
-from typing import Any
+from typing import Any, Callable
 
 from visual_window import VisualLotteryWindow
-from wheel_window import WheelLotteryWindow
+from wheel_window import DEFAULT_WHEEL_COLORS, WheelLotteryWindow
 
 from lottery import (
     available_prizes,
@@ -120,6 +120,12 @@ class LotteryApp:
         config.setdefault("visual_screen_height", 0)
         config.setdefault("excluded_winners_min", 0)
         config.setdefault("excluded_winners_max", None)
+        config.setdefault("wheel_single_round_display", False)
+        config.setdefault("wheel_round_music", "")
+        config.setdefault("wheel_round_music_volume", 0.6)
+        config.setdefault("wheel_summary_music", "")
+        config.setdefault("wheel_summary_music_volume", 0.6)
+        config.setdefault("wheel_colors", copy.deepcopy(DEFAULT_WHEEL_COLORS))
         return config
 
     def _ensure_default_files(self) -> None:
@@ -143,6 +149,12 @@ class LotteryApp:
                 "visual_screen_height": 0,
                 "excluded_winners_min": 0,
                 "excluded_winners_max": None,
+                "wheel_single_round_display": False,
+                "wheel_round_music": "",
+                "wheel_round_music_volume": 0.6,
+                "wheel_summary_music": "",
+                "wheel_summary_music_volume": 0.6,
+                "wheel_colors": copy.deepcopy(DEFAULT_WHEEL_COLORS),
             }
             with self.config_path.open("w", encoding="utf-8") as handle:
                 json.dump(default_config, handle, ensure_ascii=False, indent=2)
@@ -270,6 +282,7 @@ class LotteryApp:
         ttk.Button(action_frame, text="抽取全部奖项", command=self._draw_all).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="打开抽奖界面", command=self._open_draw_window).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="转盘抽奖", command=self._open_wheel_window).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="转盘设置", command=self._open_wheel_settings).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="开启大屏模式", command=self._open_visual_window).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="大屏设置", command=self._open_visual_settings).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="刷新名单", command=self._refresh_winners).pack(side=tk.LEFT, padx=5)
@@ -637,9 +650,16 @@ class LotteryApp:
         # 4. 创建转盘窗口
         include_excluded = self._include_excluded_list()
         excluded_range = self._get_excluded_winner_range()
+        wheel_colors = self._get_wheel_colors()
+        wheel_single_round = bool(self.config.get("wheel_single_round_display", False))
+        wheel_round_music = self.config.get("wheel_round_music") or None
+        wheel_round_volume = float(self.config.get("wheel_round_music_volume", 0.6) or 0.6)
+        wheel_summary_music = self.config.get("wheel_summary_music") or None
+        wheel_summary_volume = float(self.config.get("wheel_summary_music_volume", 0.6) or 0.6)
 
         self.wheel_window = WheelLotteryWindow(
             root=self.root,
+            base_dir=self.base_dir,
             prizes=self.prizes,
             people=self.people,
             state=self.state,
@@ -647,6 +667,12 @@ class LotteryApp:
             excluded_ids=excluded_ids,
             include_excluded=include_excluded,
             excluded_winner_range=excluded_range,
+            wheel_single_round_display=wheel_single_round,
+            wheel_round_music=wheel_round_music,
+            wheel_round_music_volume=wheel_round_volume,
+            wheel_summary_music=wheel_summary_music,
+            wheel_summary_music_volume=wheel_summary_volume,
+            wheel_colors=wheel_colors,
             on_transfer=self._on_wheel_transfer,
             on_close=lambda: setattr(self, "wheel_window", None),
         )
@@ -682,6 +708,137 @@ class LotteryApp:
             
     def _on_wheel_closed(self) -> None:
         self.wheel_window = None
+
+    def _get_wheel_colors(self) -> dict[str, str]:
+        colors = copy.deepcopy(DEFAULT_WHEEL_COLORS)
+        custom = self.config.get("wheel_colors", {})
+        if isinstance(custom, dict):
+            for key, value in custom.items():
+                if value:
+                    colors[key] = value
+        return colors
+
+    def _open_wheel_settings(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("转盘设置")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        single_round_var = tk.BooleanVar(value=bool(self.config.get("wheel_single_round_display", False)))
+        round_music_var = tk.StringVar(value=str(self.config.get("wheel_round_music", "")))
+        round_volume_var = tk.DoubleVar(value=float(self.config.get("wheel_round_music_volume", 0.6) or 0.6))
+        summary_music_var = tk.StringVar(value=str(self.config.get("wheel_summary_music", "")))
+        summary_volume_var = tk.DoubleVar(value=float(self.config.get("wheel_summary_music_volume", 0.6) or 0.6))
+
+        colors = self._get_wheel_colors()
+        color_vars = {
+            "bg_canvas": tk.StringVar(value=colors["bg_canvas"]),
+            "panel_bg": tk.StringVar(value=colors["panel_bg"]),
+            "panel_border": tk.StringVar(value=colors["panel_border"]),
+            "title_fg": tk.StringVar(value=colors["title_fg"]),
+            "status_fg": tk.StringVar(value=colors["status_fg"]),
+            "text_main": tk.StringVar(value=colors["text_main"]),
+            "text_muted": tk.StringVar(value=colors["text_muted"]),
+            "history_bg": tk.StringVar(value=colors["history_bg"]),
+            "history_fg": tk.StringVar(value=colors["history_fg"]),
+            "winner_bg": tk.StringVar(value=colors["winner_bg"]),
+            "winner_fg": tk.StringVar(value=colors["winner_fg"]),
+        }
+
+        ttk.Checkbutton(dialog, text="抽奖时单轮展示", variable=single_round_var).grid(
+            row=0, column=0, columnspan=3, sticky=tk.W, padx=8, pady=(10, 4)
+        )
+
+        ttk.Label(dialog, text="单轮展示音乐:").grid(row=1, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=round_music_var, width=30).grid(row=1, column=1, sticky=tk.W, pady=6)
+
+        def pick_round_music() -> None:
+            path = filedialog.askopenfilename(
+                title="选择单轮展示音乐",
+                filetypes=[("Audio files", "*.mp3;*.wav;*.ogg"), ("All files", "*.*")],
+            )
+            if path:
+                round_music_var.set(self._relative_or_absolute(Path(path)))
+
+        ttk.Button(dialog, text="选择文件", command=pick_round_music).grid(row=1, column=2, padx=6)
+        ttk.Label(dialog, text="单轮音量:").grid(row=2, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Scale(dialog, from_=0.0, to=1.0, variable=round_volume_var, orient=tk.HORIZONTAL, length=200).grid(
+            row=2, column=1, sticky=tk.W, pady=6
+        )
+
+        ttk.Label(dialog, text="总展示音乐:").grid(row=3, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Entry(dialog, textvariable=summary_music_var, width=30).grid(row=3, column=1, sticky=tk.W, pady=6)
+
+        def pick_summary_music() -> None:
+            path = filedialog.askopenfilename(
+                title="选择总展示音乐",
+                filetypes=[("Audio files", "*.mp3;*.wav;*.ogg"), ("All files", "*.*")],
+            )
+            if path:
+                summary_music_var.set(self._relative_or_absolute(Path(path)))
+
+        ttk.Button(dialog, text="选择文件", command=pick_summary_music).grid(row=3, column=2, padx=6)
+        ttk.Label(dialog, text="总展示音量:").grid(row=4, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Scale(dialog, from_=0.0, to=1.0, variable=summary_volume_var, orient=tk.HORIZONTAL, length=200).grid(
+            row=4, column=1, sticky=tk.W, pady=6
+        )
+
+        ttk.Separator(dialog).grid(row=5, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
+
+        color_labels = [
+            ("画布背景", "bg_canvas"),
+            ("面板背景", "panel_bg"),
+            ("面板边框", "panel_border"),
+            ("标题字体", "title_fg"),
+            ("状态字体", "status_fg"),
+            ("正文字体", "text_main"),
+            ("提示字体", "text_muted"),
+            ("历史榜单背景", "history_bg"),
+            ("历史榜单字体", "history_fg"),
+            ("本轮名单背景", "winner_bg"),
+            ("本轮名单字体", "winner_fg"),
+        ]
+        start_row = 6
+        for idx, (label, key) in enumerate(color_labels):
+            row = start_row + idx
+            ttk.Label(dialog, text=f"{label}:").grid(row=row, column=0, sticky=tk.W, padx=8, pady=4)
+            ttk.Entry(dialog, textvariable=color_vars[key], width=18).grid(row=row, column=1, sticky=tk.W, pady=4)
+
+            def make_picker(var: tk.StringVar) -> Callable[[], None]:
+                def _pick() -> None:
+                    color = colorchooser.askcolor(color=var.get(), parent=dialog)
+                    if color and color[1]:
+                        var.set(color[1])
+
+                return _pick
+
+            ttk.Button(dialog, text="选择颜色", command=make_picker(color_vars[key])).grid(
+                row=row, column=2, padx=6, pady=4
+            )
+
+        def save_settings() -> None:
+            self.config["wheel_single_round_display"] = bool(single_round_var.get())
+            self.config["wheel_round_music"] = round_music_var.get().strip()
+            self.config["wheel_round_music_volume"] = float(round_volume_var.get())
+            self.config["wheel_summary_music"] = summary_music_var.get().strip()
+            self.config["wheel_summary_music_volume"] = float(summary_volume_var.get())
+            self.config["wheel_colors"] = {key: var.get().strip() for key, var in color_vars.items()}
+            self._save_config_file()
+            wheel_window = getattr(self, "wheel_window", None)
+            if wheel_window and wheel_window.winfo_exists():
+                wheel_window.update_settings(
+                    single_round_display=self.config["wheel_single_round_display"],
+                    round_music_path=self.config["wheel_round_music"] or None,
+                    round_music_volume=self.config["wheel_round_music_volume"],
+                    summary_music_path=self.config["wheel_summary_music"] or None,
+                    summary_music_volume=self.config["wheel_summary_music_volume"],
+                    colors=self._get_wheel_colors(),
+                )
+            dialog.destroy()
+
+        ttk.Button(dialog, text="保存", command=save_settings).grid(
+            row=start_row + len(color_labels), column=0, columnspan=3, pady=(10, 12)
+        )
 
     def _open_visual_window(self) -> None:
         if self.visual_window and self.visual_window.winfo_exists():

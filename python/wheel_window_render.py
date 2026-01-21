@@ -376,6 +376,8 @@ class WheelWindowRender:
 
     def _render_grand_summary(self):
         self.phase = "summary"
+        if hasattr(self, "_play_summary_music"):
+            self._play_summary_music()
         self.result_var.set("🎉 所有奖项抽取完毕！")
         self._clear_canvas_layers()
         
