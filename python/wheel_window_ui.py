@@ -206,12 +206,13 @@ class WheelWindowUI:
 
     def _toggle_fullscreen(self, event=None):
         self.is_fullscreen = not self.is_fullscreen
-        self.attributes("-fullscreen", self.is_fullscreen)
         if self.is_fullscreen:
             self.normal_geometry = self.geometry()
-            screen_x, screen_y, screen_w, screen_h = self._get_current_screen_geometry()
+            screen_x, screen_y, screen_w, screen_h = self._get_primary_screen_geometry()
             self.geometry(f"{screen_w}x{screen_h}+{screen_x}+{screen_y}")
+            self.attributes("-fullscreen", True)
         else:
+            self.attributes("-fullscreen", False)
             if self.normal_geometry:
                 self.geometry(self.normal_geometry)
             else:
@@ -380,3 +381,34 @@ class WheelWindowUI:
         screen_x = root_x - (root_x % screen_w)
         screen_y = root_y - (root_y % screen_h)
         return screen_x, screen_y, screen_w, screen_h
+
+    def _get_primary_screen_geometry(self) -> tuple[int, int, int, int]:
+        if importlib.util.find_spec("screeninfo"):
+            screeninfo = importlib.import_module("screeninfo")
+            monitors = screeninfo.get_monitors()
+            for monitor in monitors:
+                if getattr(monitor, "is_primary", False):
+                    return monitor.x, monitor.y, monitor.width, monitor.height
+            if monitors:
+                monitor = monitors[0]
+                return monitor.x, monitor.y, monitor.width, monitor.height
+        elif sys.platform.startswith("win"):
+            monitor = ctypes.windll.user32.MonitorFromPoint(wintypes.POINT(0, 0), 1)
+            if monitor:
+                class MonitorInfo(ctypes.Structure):
+                    _fields_ = [
+                        ("cbSize", wintypes.DWORD),
+                        ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT),
+                        ("dwFlags", wintypes.DWORD),
+                    ]
+
+                info = MonitorInfo()
+                info.cbSize = ctypes.sizeof(MonitorInfo)
+                if ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                    width = info.rcMonitor.right - info.rcMonitor.left
+                    height = info.rcMonitor.bottom - info.rcMonitor.top
+                    return info.rcMonitor.left, info.rcMonitor.top, width, height
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        return 0, 0, screen_w, screen_h
