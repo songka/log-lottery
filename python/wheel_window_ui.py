@@ -248,6 +248,10 @@ class WheelWindowUI:
         if options and (not self.prize_var.get() or self.prize_var.get() not in options):
             self.prize_var.set(options[0])
             self._prepare_wheel()
+        elif not options and self._all_prizes_complete():
+            self.phase = "prize_summary"
+            self.result_var.set("🎉 所有奖项已完成！点击确认查看总榜")
+            self._update_btn_state()
 
     def _refresh_history_list(self) -> None:
         if not hasattr(self, "history_listbox"): return
