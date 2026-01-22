@@ -255,7 +255,8 @@ class WheelWindowRender:
                     item["text_ids"] = None # ID失效，下帧重建
 
         # 确保文字层在扇区层之上
-        self.canvas.tag_raise("text", "wheel")
+        if self.canvas.find_withtag("wheel") and self.canvas.find_withtag("text"):
+            self.canvas.tag_raise("text", "wheel")
 
         # --- 3. 覆盖层 (Overlay) ---
         # 覆盖层元素较少，可以使用删除重建的方式，或者也优化为 update
@@ -376,6 +377,8 @@ class WheelWindowRender:
 
     def _render_grand_summary(self):
         self.phase = "summary"
+        if hasattr(self, "_play_summary_music"):
+            self._play_summary_music()
         self.result_var.set("🎉 所有奖项抽取完毕！")
         self._clear_canvas_layers()
         
@@ -444,6 +447,8 @@ class WheelWindowRender:
         self._start_summary_scroll(max(column_heights), height)
 
     def _render_prize_summary(self, prize) -> None:
+        if hasattr(self, "_play_round_music"):
+            self._play_round_music()
         self._clear_canvas_layers()
         width = self.canvas.winfo_width()
         height = self.canvas.winfo_height()

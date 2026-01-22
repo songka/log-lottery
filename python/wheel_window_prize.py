@@ -51,7 +51,13 @@ class WheelWindowPrize:
         return remaining_slots(current_prize, self.lottery_state)
 
     def _has_next_prize(self) -> bool:
-        return self._next_available_prize() is not None
+        current_prize = self._get_current_prize()
+        for prize in self.prizes:
+            if current_prize and prize.prize_id == current_prize.prize_id:
+                continue
+            if remaining_slots(prize, self.lottery_state) > 0:
+                return True
+        return False
 
     def _all_prizes_complete(self) -> bool:
         return all(remaining_slots(prize, self.lottery_state) <= 0 for prize in self.prizes)
@@ -128,10 +134,6 @@ class WheelWindowPrize:
         self.is_showing_prize_result = False
         # 此时才根据需要刷新一次列表，把刚才抽完的奖项标记为 0
         self._refresh_prize_options(hide_completed=False)
-        if not self._has_next_prize():
-            self._render_grand_summary()
-            self._update_btn_state()
-            return
         self.phase = "idle"
         self.result_var.set("当前奖项已结束，请手动切换下一奖项")
         self._prepare_wheel() # 重新准备画布（显示空或就绪）
