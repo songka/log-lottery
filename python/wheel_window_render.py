@@ -255,7 +255,8 @@ class WheelWindowRender:
                     item["text_ids"] = None # ID失效，下帧重建
 
         # 确保文字层在扇区层之上
-        self.canvas.tag_raise("text", "wheel")
+        if self.canvas.find_withtag("wheel") and self.canvas.find_withtag("text"):
+            self.canvas.tag_raise("text", "wheel")
 
         # --- 3. 覆盖层 (Overlay) ---
         # 覆盖层元素较少，可以使用删除重建的方式，或者也优化为 update

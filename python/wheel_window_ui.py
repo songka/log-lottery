@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import time
 import tkinter as tk
 from tkinter import simpledialog, ttk
@@ -327,6 +329,25 @@ class WheelWindowUI:
         )
 
     def _get_current_screen_geometry(self) -> tuple[int, int, int, int]:
+        if importlib.util.find_spec("screeninfo"):
+            screeninfo = importlib.import_module("screeninfo")
+            monitors = screeninfo.get_monitors()
+            root_x = self.winfo_rootx()
+            root_y = self.winfo_rooty()
+            width = max(1, self.winfo_width())
+            height = max(1, self.winfo_height())
+            center_x = root_x + width / 2
+            center_y = root_y + height / 2
+            for monitor in monitors:
+                if (
+                    monitor.x <= center_x < monitor.x + monitor.width
+                    and monitor.y <= center_y < monitor.y + monitor.height
+                ):
+                    return monitor.x, monitor.y, monitor.width, monitor.height
+            if monitors:
+                monitor = monitors[0]
+                return monitor.x, monitor.y, monitor.width, monitor.height
+
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
         root_x = self.winfo_rootx()
