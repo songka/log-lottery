@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import ctypes
 import importlib
 import importlib.util
+import sys
+from ctypes import wintypes
 import time
 import tkinter as tk
 from tkinter import simpledialog, ttk
@@ -351,6 +354,24 @@ class WheelWindowUI:
             if monitors:
                 monitor = monitors[0]
                 return monitor.x, monitor.y, monitor.width, monitor.height
+        elif sys.platform.startswith("win"):
+            hwnd = self.winfo_id()
+            monitor = ctypes.windll.user32.MonitorFromWindow(hwnd, 2)
+            if monitor:
+                class MonitorInfo(ctypes.Structure):
+                    _fields_ = [
+                        ("cbSize", wintypes.DWORD),
+                        ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT),
+                        ("dwFlags", wintypes.DWORD),
+                    ]
+
+                info = MonitorInfo()
+                info.cbSize = ctypes.sizeof(MonitorInfo)
+                if ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                    width = info.rcMonitor.right - info.rcMonitor.left
+                    height = info.rcMonitor.bottom - info.rcMonitor.top
+                    return info.rcMonitor.left, info.rcMonitor.top, width, height
 
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
