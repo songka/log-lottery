@@ -37,6 +37,8 @@ class VisualLotteryWindow(tk.Toplevel):
         state: dict[str, Any],
         global_must_win: set[str],
         excluded_ids: set[str],
+        include_excluded: bool,
+        excluded_winner_range: tuple[int | None, int | None] | None,
         background_color: str,
         background_path: str | None,
         background_music_path: str | None,
@@ -54,6 +56,8 @@ class VisualLotteryWindow(tk.Toplevel):
         self.state = state
         self.global_must_win = global_must_win
         self.excluded_ids = excluded_ids
+        self.include_excluded = include_excluded
+        self.excluded_winner_range = excluded_winner_range
         self.background_color = background_color or "#0b0f1c"
         self.background_path = background_path
         self.background_music_path = background_music_path
@@ -486,13 +490,30 @@ class VisualLotteryWindow(tk.Toplevel):
     def _draw_results(self) -> None:
         if not self.prize:
             return
-        winners = draw_prize(
-            self.prize,
-            self.people,
-            self.state,
-            self.global_must_win,
-            self.excluded_ids,
-        )
+        try:
+            winners = draw_prize(
+                self.prize,
+                self.people,
+                self.state,
+                self.global_must_win,
+                self.excluded_ids,
+                include_excluded=self.include_excluded,
+                excluded_winner_range=self.excluded_winner_range,
+                prizes=self.prizes,
+            )
+        except ValueError as exc:
+            self.canvas.delete("visual_item")
+            self.canvas.delete("result")
+            self.canvas.delete("particle")
+            self.canvas.create_text(
+                self.canvas.winfo_width() / 2,
+                self.canvas.winfo_height() / 2,
+                text=str(exc),
+                fill="#ffffff",
+                font=("Helvetica", 22, "bold"),
+                tags="result",
+            )
+            return
         for winner in winners:
             self.drawn_ids.add(winner["person_id"])
         if self.on_complete:
@@ -707,11 +728,12 @@ class VisualLotteryWindow(tk.Toplevel):
             return [person.name for person in self.people]
         excluded_must_win = self.global_must_win if self.prize.exclude_must_win else set()
         excluded_must_win = excluded_must_win - set(self.prize.must_win_ids)
+        exclude_excluded_list = self.prize.exclude_excluded_list and not self.include_excluded
         names = [
             person.name
             for person in self.people
             if (
-                person.person_id not in self.excluded_ids
+                (not exclude_excluded_list or person.person_id not in self.excluded_ids)
                 and (not self.prize.exclude_previous_winners or person.person_id not in self.drawn_ids)
                 and person.person_id not in excluded_must_win
             )
