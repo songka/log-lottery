@@ -179,6 +179,8 @@ class WheelWindowLogic:
             self._update_btn_state()
 
     def _prepare_wheel(self) -> None:
+        if self.phase == "prize_summary":
+            return
         if self._all_prizes_complete():
             self._render_grand_summary()
             return
