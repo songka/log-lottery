@@ -8,11 +8,16 @@ import importlib
 import importlib.util
 import sys
 from ctypes import wintypes
+import logging
 import time
 import tkinter as tk
 from tkinter import simpledialog, ttk
 
 from lottery import remaining_slots
+
+logger = logging.getLogger(__name__)
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 class WheelWindowUI:
@@ -206,17 +211,31 @@ class WheelWindowUI:
 
     def _toggle_fullscreen(self, event=None):
         self.is_fullscreen = not self.is_fullscreen
+        logger.info("Toggle fullscreen: target_state=%s", self.is_fullscreen)
         if self.is_fullscreen:
             self.normal_geometry = self.geometry()
+            logger.info("Saved normal geometry: %s", self.normal_geometry)
             screen_x, screen_y, screen_w, screen_h = self._get_primary_screen_geometry()
-            self.geometry(f"{screen_w}x{screen_h}+{screen_x}+{screen_y}")
+            logger.info(
+                "Entering fullscreen geometry: x=%s y=%s w=%s h=%s",
+                screen_x,
+                screen_y,
+                screen_w,
+                screen_h,
+            )
+            geometry = f"{screen_w}x{screen_h}+{screen_x}+{screen_y}"
+            self.geometry(geometry)
+            logger.info("Applied geometry before fullscreen: %s", geometry)
             self.attributes("-fullscreen", True)
+            logger.info("Fullscreen enabled, current geometry: %s", self.geometry())
         else:
             self.attributes("-fullscreen", False)
+            logger.info("Fullscreen disabled, restoring geometry: %s", self.normal_geometry)
             if self.normal_geometry:
                 self.geometry(self.normal_geometry)
             else:
                 self.geometry("1440x900")
+            logger.info("Exit fullscreen geometry: %s", self.geometry())
 
     def _handle_close(self) -> None:
         if self.draw_after_id: self.after_cancel(self.draw_after_id)
@@ -351,9 +370,23 @@ class WheelWindowUI:
                     monitor.x <= center_x < monitor.x + monitor.width
                     and monitor.y <= center_y < monitor.y + monitor.height
                 ):
+                    logger.info(
+                        "Current screen (screeninfo): x=%s y=%s w=%s h=%s",
+                        monitor.x,
+                        monitor.y,
+                        monitor.width,
+                        monitor.height,
+                    )
                     return monitor.x, monitor.y, monitor.width, monitor.height
             if monitors:
                 monitor = monitors[0]
+                logger.info(
+                    "Current screen fallback (screeninfo first monitor): x=%s y=%s w=%s h=%s",
+                    monitor.x,
+                    monitor.y,
+                    monitor.width,
+                    monitor.height,
+                )
                 return monitor.x, monitor.y, monitor.width, monitor.height
         elif sys.platform.startswith("win"):
             hwnd = self.winfo_id()
@@ -372,6 +405,13 @@ class WheelWindowUI:
                 if ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
                     width = info.rcMonitor.right - info.rcMonitor.left
                     height = info.rcMonitor.bottom - info.rcMonitor.top
+                    logger.info(
+                        "Current screen (win32): x=%s y=%s w=%s h=%s",
+                        info.rcMonitor.left,
+                        info.rcMonitor.top,
+                        width,
+                        height,
+                    )
                     return info.rcMonitor.left, info.rcMonitor.top, width, height
 
         screen_w = self.winfo_screenwidth()
@@ -380,6 +420,13 @@ class WheelWindowUI:
         root_y = self.winfo_rooty()
         screen_x = root_x - (root_x % screen_w)
         screen_y = root_y - (root_y % screen_h)
+        logger.info(
+            "Current screen fallback (tk): x=%s y=%s w=%s h=%s",
+            screen_x,
+            screen_y,
+            screen_w,
+            screen_h,
+        )
         return screen_x, screen_y, screen_w, screen_h
 
     def _get_primary_screen_geometry(self) -> tuple[int, int, int, int]:
@@ -388,9 +435,23 @@ class WheelWindowUI:
             monitors = screeninfo.get_monitors()
             for monitor in monitors:
                 if getattr(monitor, "is_primary", False):
+                    logger.info(
+                        "Primary screen (screeninfo): x=%s y=%s w=%s h=%s",
+                        monitor.x,
+                        monitor.y,
+                        monitor.width,
+                        monitor.height,
+                    )
                     return monitor.x, monitor.y, monitor.width, monitor.height
             if monitors:
                 monitor = monitors[0]
+                logger.info(
+                    "Primary screen fallback (screeninfo first monitor): x=%s y=%s w=%s h=%s",
+                    monitor.x,
+                    monitor.y,
+                    monitor.width,
+                    monitor.height,
+                )
                 return monitor.x, monitor.y, monitor.width, monitor.height
         elif sys.platform.startswith("win"):
             monitor = ctypes.windll.user32.MonitorFromPoint(wintypes.POINT(0, 0), 1)
@@ -408,7 +469,15 @@ class WheelWindowUI:
                 if ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
                     width = info.rcMonitor.right - info.rcMonitor.left
                     height = info.rcMonitor.bottom - info.rcMonitor.top
+                    logger.info(
+                        "Primary screen (win32): x=%s y=%s w=%s h=%s",
+                        info.rcMonitor.left,
+                        info.rcMonitor.top,
+                        width,
+                        height,
+                    )
                     return info.rcMonitor.left, info.rcMonitor.top, width, height
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
+        logger.info("Primary screen fallback (tk): x=0 y=0 w=%s h=%s", screen_w, screen_h)
         return 0, 0, screen_w, screen_h
