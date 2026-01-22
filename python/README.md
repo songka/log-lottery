@@ -5,7 +5,11 @@
 ## 运行方式
 
 1. 确认已安装 Python 3.10+。
-2. 进入本目录后执行：
+2. 若需多屏下让转盘全屏留在当前屏幕，请安装依赖：
+   ```bash
+   pip install screeninfo
+   ```
+3. 进入本目录后执行：
 
 ```bash
 python app.py
