@@ -1,8 +1,0 @@
-[
-  {"id": "U1001", "name": "张三", "department": "研发"},
-  {"id": "U1002", "name": "李四", "department": "产品"},
-  {"id": "U1003", "name": "王五", "department": "设计"},
-  {"id": "U1004", "name": "赵六", "department": "运营"},
-  {"id": "U1005", "name": "钱七", "department": "市场"},
-  {"id": "U1006", "name": "孙八", "department": "财务"}
-]
