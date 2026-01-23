@@ -212,30 +212,45 @@ class WheelWindowUI:
     def _toggle_fullscreen(self, event=None):
         self.is_fullscreen = not self.is_fullscreen
         logger.info("Toggle fullscreen: target_state=%s", self.is_fullscreen)
+
         if self.is_fullscreen:
+            # 保存普通窗口状态
             self.normal_geometry = self.geometry()
+            self._normal_overrideredirect = bool(self.overrideredirect())
+            self._normal_topmost = bool(self.attributes("-topmost"))
             logger.info("Saved normal geometry: %s", self.normal_geometry)
-            screen_x, screen_y, screen_w, screen_h = self._get_primary_screen_geometry()
-            logger.info(
-                "Entering fullscreen geometry: x=%s y=%s w=%s h=%s",
-                screen_x,
-                screen_y,
-                screen_w,
-                screen_h,
-            )
-            geometry = f"{screen_w}x{screen_h}+{screen_x}+{screen_y}"
-            self.geometry(geometry)
-            logger.info("Applied geometry before fullscreen: %s", geometry)
-            self.attributes("-fullscreen", True)
-            logger.info("Fullscreen enabled, current geometry: %s", self.geometry())
+
+            # ✅ 用当前窗口所在屏幕（你 log 已证明这一步正确）
+            screen_x, screen_y, screen_w, screen_h = self._get_preferred_fullscreen_geometry()
+            logger.info("Entering fullscreen geometry: x=%s y=%s w=%s h=%s",
+                        screen_x, screen_y, screen_w, screen_h)
+
+            # ✅ 关键：不用 -fullscreen，改用“伪全屏”
+            self.attributes("-fullscreen", False)       # 确保关闭真正全屏
+            self.overrideredirect(True)                 # 去边框
+            self.attributes("-topmost", True)           # 可选：置顶（大屏展示通常需要）
+            self.update_idletasks()
+            self.geometry(f"{screen_w}x{screen_h}+{screen_x}+{screen_y}")
+            self.update_idletasks()
+            self.focus_force()
+
+            logger.info("Fake fullscreen enabled, current geometry: %s", self.geometry())
+
         else:
+            # 退出伪全屏：恢复边框/置顶/大小位置
+            self.overrideredirect(getattr(self, "_normal_overrideredirect", False))
+            self.attributes("-topmost", getattr(self, "_normal_topmost", False))
             self.attributes("-fullscreen", False)
+
             logger.info("Fullscreen disabled, restoring geometry: %s", self.normal_geometry)
-            if self.normal_geometry:
+            if getattr(self, "normal_geometry", None):
                 self.geometry(self.normal_geometry)
             else:
                 self.geometry("1440x900")
+
+            self.update_idletasks()
             logger.info("Exit fullscreen geometry: %s", self.geometry())
+
 
     def _handle_close(self) -> None:
         if self.draw_after_id: self.after_cancel(self.draw_after_id)
@@ -354,6 +369,36 @@ class WheelWindowUI:
             arrowcolor=self.colors["combo_arrow"],
             font=("Microsoft YaHei UI", 12),
         )
+
+    def _get_preferred_fullscreen_geometry(self) -> tuple[int, int, int, int]:
+        """
+        F11 全屏优先规则：
+        1) 如果检测到多屏：优先选“非主屏”(扩展屏)里面积最大的那一块
+        2) 如果只有单屏：用当前窗口所在屏
+        3) 如果拿不到 monitors：回退到当前窗口所在屏
+        """
+        if importlib.util.find_spec("screeninfo"):
+            screeninfo = importlib.import_module("screeninfo")
+            monitors = screeninfo.get_monitors() or []
+
+            # 多屏：优先非主屏（扩展屏）
+            if len(monitors) >= 2:
+                secondaries = [m for m in monitors if not getattr(m, "is_primary", False)]
+                if secondaries:
+                    # 多个扩展屏时，选面积最大的
+                    m = max(secondaries, key=lambda mm: (mm.width * mm.height))
+                    logger.info(
+                        "Preferred fullscreen screen (secondary): x=%s y=%s w=%s h=%s",
+                        m.x, m.y, m.width, m.height
+                    )
+                    return m.x, m.y, m.width, m.height
+
+            # 单屏 or 找不到 secondary：回到“当前窗口所在屏”
+            return self._get_current_screen_geometry()
+
+        # 没有 screeninfo：回退到当前窗口所在屏（你已有 win32/tk fallback）
+        return self._get_current_screen_geometry()
+
 
     def _get_current_screen_geometry(self) -> tuple[int, int, int, int]:
         if importlib.util.find_spec("screeninfo"):

@@ -264,8 +264,14 @@ class WheelWindowRender:
         self.canvas.delete("overlay") 
         
         # 中心圆
+        # self.canvas.create_oval(
+            # cx - 70, cy - 70, cx + 70, cy + 70,
+            # fill=self.colors["white"], outline=self.colors["gold"],
+            # width=4, tags="overlay",
+        # )
+        center_r = int(max(115, min(160, radius * 0.25)))  # ✅ 你要更大：把 0.22/90/140 调大
         self.canvas.create_oval(
-            cx - 70, cy - 70, cx + 70, cy + 70,
+            cx - center_r, cy - center_r, cx + center_r, cy + center_r,
             fill=self.colors["white"], outline=self.colors["gold"],
             width=4, tags="overlay",
         )
@@ -288,16 +294,48 @@ class WheelWindowRender:
                 pass
         
         # 使用普通 text 绘制中心文字（避免 _draw_text_with_outline 造成的性能负担）
+        # self.canvas.create_text(
+            # cx, cy - 10, text=center_text_big,
+            # font=("Microsoft YaHei UI", 24, "bold"), fill=self.colors["red"],
+            # tags="overlay"
+        # )
+        t = self._wrap_two_lines(center_text_big, max_len=6)
+        lines = t.count("\n") + 1  # 实际行数（1 或 2）
+
+        # 字号自适应（按原始文本长度，不按换行后）
+        font_size = 28
+        if len(center_text_big) >= 10:
+            font_size = 22
+        if len(center_text_big) >= 14:
+            font_size = 18
+
+        max_center_text_w = int(center_r * 1.75)
+
+        # 根据行数动态调整位置（关键点）
+        title_y = cy - center_r * (0.28 if lines == 2 else 0.22)
+        small_y = cy + center_r * (0.52 if lines == 2 else 0.40)
+
+        # 奖项名（上半区）
         self.canvas.create_text(
-            cx, cy - 10, text=center_text_big,
-            font=("Microsoft YaHei UI", 24, "bold"), fill=self.colors["red"],
-            tags="overlay"
-        )
-        self.canvas.create_text(
-            cx, cy + 25, text=center_text_small,
-            font=("Microsoft YaHei UI", 12, "bold"), fill=self.colors["text_muted"],
+            cx, title_y,
+            text=t,
+            font=("Microsoft YaHei UI", font_size, "bold"),
+            fill=self.colors["red"],
+            width=max_center_text_w,
+            justify=tk.CENTER,
             tags="overlay",
         )
+
+        # 剩余数量（下半区，永远不挤）
+        if center_text_small:
+            self.canvas.create_text(
+                cx, small_y,
+                text=center_text_small,
+                font=("Microsoft YaHei UI", 16, "bold"),
+                fill=self.colors["text_muted"],
+                tags="overlay",
+            )
+
 
         # 顶部指针
         self.canvas.create_polygon(
@@ -367,6 +405,65 @@ class WheelWindowRender:
         
         self.last_render_time = now
         
+    def _wrap_two_lines(self, s: str, max_len: int = 6) -> str:
+        """
+        智能断行：
+        1) 优先把常见奖项后缀（如 参与奖/幸运奖/锦鲤奖）整体放到第二行
+        2) 否则在 max_len 附近做语义断行（避免孤字）
+        """
+        s = (s or "").strip()
+        if not s:
+            return ""
+
+        # ① 优先后缀整块下沉（你说的“参与奖/开心奖/幸运奖/锦鲤奖”及可衍生）
+        # 可继续往里加：比如 "安慰奖"、"特别奖"、"人气奖"、"团队奖" 等
+        suffixes = [
+            "参与奖", "开心奖", "幸运奖", "锦鲤奖",
+            "安慰奖", "人气奖", "特别奖", "加码奖",
+            "互动奖", "惊喜奖", "纪念奖", "贡献奖",
+            "最佳奖", "优秀奖", "大奖"
+        ]
+        for suf in suffixes:
+            if s.endswith(suf) and len(s) > len(suf):
+                line1 = s[:-len(suf)].strip()
+                line2 = suf
+                # line1 过短就不切（避免第一行只剩 1-2 个字太奇怪）
+                if len(line1) >= 3:
+                    return f"{line1}\n{line2}"
+
+        # ② 已经很短就不换行
+        if len(s) <= max_len:
+            return s
+
+        # ③ 语义断行兜底：优先在这些字后断（避免“与/奖”孤字）
+        break_after = ["奖", "礼", "赛", "组", "类", "项", "榜", "单", "杯", "王", "爆", "连", "相"]
+        start = max(1, max_len - 2)
+        end = min(len(s) - 1, max_len + 2)
+
+        best = None
+        for i in range(end, start - 1, -1):
+            if s[i - 1] in break_after:
+                best = i
+                break
+
+        if best is None:
+            best = max_len
+
+        line1 = s[:best].strip()
+        line2 = s[best:].strip()
+
+        # 防止第二行只剩 1 个字
+        if len(line2) == 1 and best > 1:
+            best -= 1
+            line1 = s[:best].strip()
+            line2 = s[best:].strip()
+
+        return f"{line1}\n{line2}"
+
+
+    
+   
+    
     def _format_names_rows(self, names: list[str], per_row: int = 4) -> str:
         if not names:
             return ""
@@ -415,7 +512,7 @@ class WheelWindowRender:
 
         header_height = 28
         line_height = 20
-        block_gap = 26
+        block_gap = 76
 
         for idx, (prize_name, names) in enumerate(ordered_prizes):
             col = idx % columns

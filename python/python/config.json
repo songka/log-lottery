@@ -13,5 +13,34 @@
   "visual_screen_x": 0,
   "visual_screen_y": 0,
   "visual_screen_width": 0,
-  "visual_screen_height": 0
+  "visual_screen_height": 0,
+  "excluded_winners_min": 5,
+  "excluded_winners_max": 5,
+  "wheel_single_round_display": false,
+  "wheel_round_music": "E:\\专案\\2025\\抽奖\\自己\\R007\\python\\python\\music\\暖場音樂.MP3",
+  "wheel_round_music_volume": 0.6,
+  "wheel_spin_music": "E:\\专案\\2025\\抽奖\\自己\\R007\\python\\python\\music\\抽奖中.MP3",
+  "wheel_spin_music_volume": 0.6,
+  "wheel_summary_music": "E:\\专案\\2025\\抽奖\\自己\\R007\\python\\python\\music\\1月10日-結束音樂.MP3",
+  "wheel_summary_music_volume": 0.6,
+  "wheel_segment_colors": [
+    "#E53935",
+    "#C62828",
+    "#008000",
+    "#FF8A65",
+    "#a27900"
+  ],
+  "wheel_colors": {
+    "bg_canvas": "#4A0C0C",
+    "panel_bg": "#5C1010",
+    "panel_border": "#8B1A1A",
+    "title_fg": "#F7D774",
+    "status_fg": "#F7D774",
+    "text_main": "#FFF8E7",
+    "text_muted": "#F6D9B8",
+    "history_bg": "#7A1616",
+    "history_fg": "#FFF8E7",
+    "winner_bg": "#7A1616",
+    "winner_fg": "#FFF8E7"
+  }
 }

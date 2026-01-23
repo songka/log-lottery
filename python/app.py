@@ -279,11 +279,11 @@ class LotteryApp:
         self.prize_combo = ttk.Combobox(settings_frame, textvariable=self.prize_var, state="readonly", width=24)
         self.prize_combo.grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
 
-        ttk.Checkbutton(
-            settings_frame,
-            text="忽略排除名单",
-            variable=self.include_excluded_var,
-        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(6, 0))
+        # ttk.Checkbutton(
+            # settings_frame,
+            # text="忽略排除名单",
+            # variable=self.include_excluded_var,
+        # ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(6, 0))
 
         action_frame = ttk.Frame(self.main_frame, padding=10)
         action_frame.pack(fill=tk.X)

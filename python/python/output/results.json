@@ -1,6 +1,102 @@
 {
   "version": 1,
-  "generated_at": "2026-01-17T09:02:44+08:00",
-  "winners": [],
-  "prizes": {}
+  "generated_at": "2026-01-23T15:04:31+08:00",
+  "winners": [
+    {
+      "timestamp": "2026-01-23T15:04:31+08:00",
+      "prize_id": "三等奖1",
+      "prize_name": "快乐相伴参与奖",
+      "person_id": "AAGIS",
+      "person_name": "曹嘉祥",
+      "department": "製造",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-23T15:04:31+08:00",
+      "prize_id": "三等奖1",
+      "prize_name": "快乐相伴参与奖",
+      "person_id": "XZ60L",
+      "person_name": "熊世超",
+      "department": "製造",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-23T15:04:31+08:00",
+      "prize_id": "三等奖1",
+      "prize_name": "快乐相伴参与奖",
+      "person_id": "AAAGO",
+      "person_name": "熊進",
+      "department": "製造",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-23T15:04:31+08:00",
+      "prize_id": "三等奖1",
+      "prize_name": "快乐相伴参与奖",
+      "person_id": "AAFFI",
+      "person_name": "高勝平",
+      "department": "製造",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-23T15:04:31+08:00",
+      "prize_id": "三等奖1",
+      "prize_name": "快乐相伴参与奖",
+      "person_id": "YWN03",
+      "person_name": "李勇杰",
+      "department": "製造",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-23T15:04:31+08:00",
+      "prize_id": "三等奖1",
+      "prize_name": "快乐相伴参与奖",
+      "person_id": "YSW76",
+      "person_name": "李文奇",
+      "department": "設計",
+      "source": "random"
+    }
+  ],
+  "prizes": {
+    "三等奖1": {
+      "winners": [
+        "AAGIS",
+        "XZ60L",
+        "AAAGO",
+        "AAFFI",
+        "YWN03",
+        "YSW76"
+      ]
+    },
+    "三等奖2": {
+      "winners": []
+    },
+    "三等奖3": {
+      "winners": []
+    },
+    "三等奖4": {
+      "winners": []
+    },
+    "三等奖5": {
+      "winners": []
+    },
+    "三等奖6": {
+      "winners": []
+    },
+    "二等奖": {
+      "winners": []
+    },
+    "一等奖1": {
+      "winners": []
+    },
+    "一等奖2": {
+      "winners": []
+    },
+    "一等奖3": {
+      "winners": []
+    },
+    "特等奖": {
+      "winners": []
+    }
+  }
 }
