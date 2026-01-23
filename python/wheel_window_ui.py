@@ -215,7 +215,7 @@ class WheelWindowUI:
         if self.is_fullscreen:
             self.normal_geometry = self.geometry()
             logger.info("Saved normal geometry: %s", self.normal_geometry)
-            screen_x, screen_y, screen_w, screen_h = self._get_primary_screen_geometry()
+            screen_x, screen_y, screen_w, screen_h = self._get_current_screen_geometry()
             logger.info(
                 "Entering fullscreen geometry: x=%s y=%s w=%s h=%s",
                 screen_x,
