@@ -83,12 +83,12 @@ class WheelWindowLogic:
                 self._update_btn_state()
 
     def _init_time_physics(self, power):
-        self.spin_duration = 1.0 + (4.0 * power)
+        self.spin_duration = 0.5 + (2.0 * power)
         self.spin_start_time = time.monotonic()
         
-        base_brake = 2.0 + (2.5 * power)
-        random_flux = random.uniform(-0.8, 0.8)
-        self.brake_duration = max(1.5, base_brake + random_flux)
+        base_brake = 1.0 + (1.5 * power)
+        random_flux = random.uniform(-0.4, 0.4)
+        self.brake_duration = max(1.0, base_brake + random_flux)
         
         self.current_speed = 30.0
         self.brake_phase = "braking"
@@ -415,9 +415,9 @@ class WheelWindowLogic:
                         engine.setProperty('voice', selected_voice)
                     
                     # 慢速清晰播报：恭喜 + 工号 + 姓名 + 奖项
-                    engine.setProperty('rate', 150)
+                    engine.setProperty('rate', 200)
                     spaced_id = " ".join(str(person_id))
-                    full_sentence = f"恭喜。{spaced_id}，{name}，获得{prize_label}"
+                    full_sentence = f"恭喜，{spaced_id} {name}，获得{prize_label}"
                     engine.say(full_sentence)
                     
                     engine.runAndWait()

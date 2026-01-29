@@ -1,162 +1,56 @@
 {
   "version": 1,
-  "generated_at": "2026-01-29T10:18:35+08:00",
+  "generated_at": "2026-01-29T13:16:38+08:00",
   "winners": [
     {
-      "timestamp": "2026-01-29T10:09:31+08:00",
-      "prize_id": "三等奖1",
-      "prize_name": "快乐相伴奖",
-      "person_id": "AAABX",
-      "person_name": "王偉志",
-      "department": "製造處",
-      "source": "random"
-    },
-    {
-      "timestamp": "2026-01-29T10:09:50+08:00",
-      "prize_id": "三等奖1",
-      "prize_name": "快乐相伴奖",
-      "person_id": "AAAAE",
-      "person_name": "曹燦",
-      "department": "製造處",
-      "source": "random"
-    },
-    {
-      "timestamp": "2026-01-29T10:10:14+08:00",
-      "prize_id": "三等奖1",
-      "prize_name": "快乐相伴奖",
-      "person_id": "YSG40",
-      "person_name": "李鵬宇",
-      "department": "電控處",
-      "source": "random"
-    },
-    {
-      "timestamp": "2026-01-29T10:10:53+08:00",
-      "prize_id": "三等奖1",
-      "prize_name": "快乐相伴奖",
-      "person_id": "oo948",
-      "person_name": "張立人",
+      "timestamp": "2026-01-29T13:14:07+08:00",
+      "prize_id": "提示",
+      "prize_name": "500",
+      "person_id": "YXO05",
+      "person_name": "朱曉晨",
       "department": "管理室",
       "source": "random"
     },
     {
-      "timestamp": "2026-01-29T10:11:45+08:00",
-      "prize_id": "三等奖1",
-      "prize_name": "快乐相伴奖",
-      "person_id": "YWO99",
-      "person_name": "張耀祖",
-      "department": "電控處",
-      "source": "random"
-    },
-    {
-      "timestamp": "2026-01-29T10:13:55+08:00",
-      "prize_id": "三等奖1",
-      "prize_name": "快乐相伴奖",
-      "person_id": "YWN03",
-      "person_name": "李勇杰",
-      "department": "製造處",
-      "source": "random"
-    },
-    {
-      "timestamp": "2026-01-29T10:14:37+08:00",
-      "prize_id": "三等奖2",
-      "prize_name": "快乐相伴奖",
-      "person_id": "AAFT8",
-      "person_name": "張世俊",
-      "department": "製造處",
-      "source": "random"
-    },
-    {
-      "timestamp": "2026-01-29T10:14:55+08:00",
-      "prize_id": "三等奖2",
-      "prize_name": "快乐相伴奖",
-      "person_id": "XT757",
-      "person_name": "郭起雷",
-      "department": "製造處",
-      "source": "random"
-    },
-    {
-      "timestamp": "2026-01-29T10:15:19+08:00",
-      "prize_id": "三等奖2",
-      "prize_name": "快乐相伴奖",
-      "person_id": "YTC74",
-      "person_name": "吳辰琛",
-      "department": "電控處",
-      "source": "random"
-    },
-    {
-      "timestamp": "2026-01-29T10:15:54+08:00",
-      "prize_id": "三等奖2",
-      "prize_name": "快乐相伴奖",
-      "person_id": "XZ60L",
-      "person_name": "熊世超",
-      "department": "製造處",
-      "source": "random"
-    },
-    {
-      "timestamp": "2026-01-29T10:16:45+08:00",
-      "prize_id": "三等奖2",
-      "prize_name": "快乐相伴奖",
-      "person_id": "AAGIS",
-      "person_name": "曹嘉祥",
-      "department": "製造處",
-      "source": "random"
-    },
-    {
-      "timestamp": "2026-01-29T10:18:24+08:00",
-      "prize_id": "三等奖2",
-      "prize_name": "快乐相伴奖",
-      "person_id": "AAGXZ",
-      "person_name": "趙浩旗",
-      "department": "製造處",
+      "timestamp": "2026-01-29T13:16:32+08:00",
+      "prize_id": "特殊2",
+      "prize_name": "500-赖",
+      "person_id": "ER632",
+      "person_name": "李甜甜",
+      "department": "管理室",
       "source": "random"
     }
   ],
   "prizes": {
     "三等奖1": {
-      "winners": [
-        "AAABX",
-        "AAAAE",
-        "YSG40",
-        "oo948",
-        "YWO99",
-        "YWN03"
-      ]
-    },
-    "三等奖2": {
-      "winners": [
-        "AAFT8",
-        "XT757",
-        "YTC74",
-        "XZ60L",
-        "AAGIS",
-        "AAGXZ"
-      ]
-    },
-    "三等奖3": {
-      "winners": []
-    },
-    "三等奖4": {
-      "winners": []
-    },
-    "三等奖5": {
-      "winners": []
-    },
-    "三等奖6": {
       "winners": []
     },
     "二等奖": {
       "winners": []
     },
-    "一等奖1": {
+    "三等奖2": {
       "winners": []
     },
-    "一等奖2": {
+    "一等奖": {
       "winners": []
     },
-    "一等奖3": {
+    "三等奖3": {
       "winners": []
     },
     "特等奖": {
+      "winners": []
+    },
+    "提示": {
+      "winners": [
+        "YXO05"
+      ]
+    },
+    "特殊2": {
+      "winners": [
+        "ER632"
+      ]
+    },
+    "Q1": {
       "winners": []
     }
   }

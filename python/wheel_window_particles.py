@@ -56,6 +56,7 @@ class WheelWindowParticles:
                 self.removal_particles.remove(particle)
 
     def _render_removal_particles(self) -> None:
+        self.canvas.delete("fx_particles")
         for particle in self.removal_particles:
             x = particle["x"]
             y = particle["y"]

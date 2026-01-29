@@ -144,7 +144,7 @@ class WheelLotteryWindow(
         # 物理引擎 V3
         self.charge_power = 0.0     
         self.locked_charge = 0.0    
-        self.charge_speed = 0.015   
+        self.charge_speed = 0.05   
         self.space_held = False    
         
         self.spin_start_time = 0.0  
@@ -163,7 +163,7 @@ class WheelLotteryWindow(
         self.osc_min_duration = 0.6
         self.brake_start_time = 0.0
         self.brake_start_rotation = 0.0
-        self.decel_factor = 0.04    
+        self.decel_factor = 0.4    
         
         # 队列
         self.pending_winners: list[dict[str, Any]] = []

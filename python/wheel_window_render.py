@@ -18,8 +18,9 @@ class WheelWindowRender:
         y = random.randint(50, height-50)
         color = random.choice(self.colors["wheel_colors"])
         size = random.randint(5, 15)
-        self.canvas.create_oval(x, y, x+size, y+size, fill=color, tags="fx_firework")
-        self.root.after(500, lambda: self.canvas.delete("fx_firework"))
+        tag = f"fw_{time.time()}" # 使用唯一 tag 防止误删
+        self.canvas.create_oval(x, y, x+size, y+size, fill=color, tags=(tag, "fx_firework"))
+        self.root.after(500, lambda: self.canvas.delete(tag)) # 确保 500ms 后一定删除
 
     def _draw_text_with_outline(self, x, y, text, font, text_color, outline_color, thickness=2, tags=None, justify=tk.CENTER, angle=0):
         for dx in range(-thickness, thickness+1):
