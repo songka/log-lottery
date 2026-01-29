@@ -479,6 +479,12 @@ class WheelWindowRender:
         person_name = winner.get("person_name", "未知")
         return f"{department} {person_id} {person_name}".strip()
 
+    def _winner_columns(self, winner: dict) -> tuple[str, str, str]:
+        department = winner.get("department", "未知部门")
+        person_id = winner.get("person_id", "")
+        person_name = winner.get("person_name", "未知")
+        return department, person_id, person_name
+
     def _render_grand_summary(self):
         self.phase = "summary"
         if hasattr(self, "_play_summary_music"):
@@ -500,7 +506,7 @@ class WheelWindowRender:
             p_name = w.get('prize_name', '未知奖项')
             if p_name not in grouped:
                 grouped[p_name] = []
-            grouped[p_name].append(self._format_winner_display(w))
+            grouped[p_name].append(w)
 
         ordered_prizes = []
         seen_prize_names = set()
@@ -535,17 +541,57 @@ class WheelWindowRender:
                 anchor="n",
                 tags="summary_items",
             )
-            names_text = self._format_names_rows(names, per_row=2) if names else "暂无"
-            self.canvas.create_text(
-                x,
-                y + header_height,
-                text=names_text,
-                font=("Microsoft YaHei UI", 16),
-                fill=self.colors["white"],
-                anchor="n",
-                tags="summary_items",
-            )
-            names_lines = max(1, len(names_text.splitlines()))
+            names_start_y = y + header_height
+            if not names:
+                self.canvas.create_text(
+                    x,
+                    names_start_y,
+                    text="暂无",
+                    font=("Microsoft YaHei UI", 16),
+                    fill=self.colors["white"],
+                    anchor="n",
+                    tags="summary_items",
+                )
+                names_lines = 1
+            else:
+                names_lines = len(names)
+                left = x - column_width / 2 + 10
+                dept_width = column_width * 0.42
+                id_width = column_width * 0.22
+                name_width = column_width - dept_width - id_width - 20
+                dept_x = left
+                id_x = left + dept_width
+                name_x = left + dept_width + id_width
+                for line_idx, winner in enumerate(names):
+                    department, person_id, person_name = self._winner_columns(winner)
+                    line_y = names_start_y + line_idx * line_height
+                    self.canvas.create_text(
+                        dept_x,
+                        line_y,
+                        text=department,
+                        font=("Microsoft YaHei UI", 16),
+                        fill=self.colors["white"],
+                        anchor="nw",
+                        tags="summary_items",
+                    )
+                    self.canvas.create_text(
+                        id_x,
+                        line_y,
+                        text=person_id,
+                        font=("Microsoft YaHei UI", 16),
+                        fill=self.colors["white"],
+                        anchor="nw",
+                        tags="summary_items",
+                    )
+                    self.canvas.create_text(
+                        name_x,
+                        line_y,
+                        text=person_name,
+                        font=("Microsoft YaHei UI", 16),
+                        fill=self.colors["white"],
+                        anchor="nw",
+                        tags="summary_items",
+                    )
             block_height = header_height + names_lines * line_height + block_gap
             column_heights[col] += block_height
 
