@@ -416,7 +416,7 @@ class WheelWindowLogic:
                     
                     # 慢速清晰播报：恭喜 + 工号 + 姓名 + 奖项
                     engine.setProperty('rate', 150)
-                    spaced_id = " ，".join(str(person_id))
+                    spaced_id = " ".join(str(person_id))
                     full_sentence = f"恭喜。{spaced_id}，{name}，获得{prize_label}"
                     engine.say(full_sentence)
                     

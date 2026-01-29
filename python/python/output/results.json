@@ -1,75 +1,136 @@
 {
   "version": 1,
-  "generated_at": "2026-01-23T15:04:31+08:00",
+  "generated_at": "2026-01-29T10:18:35+08:00",
   "winners": [
     {
-      "timestamp": "2026-01-23T15:04:31+08:00",
+      "timestamp": "2026-01-29T10:09:31+08:00",
       "prize_id": "三等奖1",
-      "prize_name": "快乐相伴参与奖",
-      "person_id": "AAGIS",
-      "person_name": "曹嘉祥",
-      "department": "製造",
+      "prize_name": "快乐相伴奖",
+      "person_id": "AAABX",
+      "person_name": "王偉志",
+      "department": "製造處",
       "source": "random"
     },
     {
-      "timestamp": "2026-01-23T15:04:31+08:00",
+      "timestamp": "2026-01-29T10:09:50+08:00",
       "prize_id": "三等奖1",
-      "prize_name": "快乐相伴参与奖",
-      "person_id": "XZ60L",
-      "person_name": "熊世超",
-      "department": "製造",
+      "prize_name": "快乐相伴奖",
+      "person_id": "AAAAE",
+      "person_name": "曹燦",
+      "department": "製造處",
       "source": "random"
     },
     {
-      "timestamp": "2026-01-23T15:04:31+08:00",
+      "timestamp": "2026-01-29T10:10:14+08:00",
       "prize_id": "三等奖1",
-      "prize_name": "快乐相伴参与奖",
-      "person_id": "AAAGO",
-      "person_name": "熊進",
-      "department": "製造",
+      "prize_name": "快乐相伴奖",
+      "person_id": "YSG40",
+      "person_name": "李鵬宇",
+      "department": "電控處",
       "source": "random"
     },
     {
-      "timestamp": "2026-01-23T15:04:31+08:00",
+      "timestamp": "2026-01-29T10:10:53+08:00",
       "prize_id": "三等奖1",
-      "prize_name": "快乐相伴参与奖",
-      "person_id": "AAFFI",
-      "person_name": "高勝平",
-      "department": "製造",
+      "prize_name": "快乐相伴奖",
+      "person_id": "oo948",
+      "person_name": "張立人",
+      "department": "管理室",
       "source": "random"
     },
     {
-      "timestamp": "2026-01-23T15:04:31+08:00",
+      "timestamp": "2026-01-29T10:11:45+08:00",
       "prize_id": "三等奖1",
-      "prize_name": "快乐相伴参与奖",
+      "prize_name": "快乐相伴奖",
+      "person_id": "YWO99",
+      "person_name": "張耀祖",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-29T10:13:55+08:00",
+      "prize_id": "三等奖1",
+      "prize_name": "快乐相伴奖",
       "person_id": "YWN03",
       "person_name": "李勇杰",
-      "department": "製造",
+      "department": "製造處",
       "source": "random"
     },
     {
-      "timestamp": "2026-01-23T15:04:31+08:00",
-      "prize_id": "三等奖1",
-      "prize_name": "快乐相伴参与奖",
-      "person_id": "YSW76",
-      "person_name": "李文奇",
-      "department": "設計",
+      "timestamp": "2026-01-29T10:14:37+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖",
+      "person_id": "AAFT8",
+      "person_name": "張世俊",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-29T10:14:55+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖",
+      "person_id": "XT757",
+      "person_name": "郭起雷",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-29T10:15:19+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖",
+      "person_id": "YTC74",
+      "person_name": "吳辰琛",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-29T10:15:54+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖",
+      "person_id": "XZ60L",
+      "person_name": "熊世超",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-29T10:16:45+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖",
+      "person_id": "AAGIS",
+      "person_name": "曹嘉祥",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-29T10:18:24+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖",
+      "person_id": "AAGXZ",
+      "person_name": "趙浩旗",
+      "department": "製造處",
       "source": "random"
     }
   ],
   "prizes": {
     "三等奖1": {
       "winners": [
-        "AAGIS",
-        "XZ60L",
-        "AAAGO",
-        "AAFFI",
-        "YWN03",
-        "YSW76"
+        "AAABX",
+        "AAAAE",
+        "YSG40",
+        "oo948",
+        "YWO99",
+        "YWN03"
       ]
     },
     "三等奖2": {
-      "winners": []
+      "winners": [
+        "AAFT8",
+        "XT757",
+        "YTC74",
+        "XZ60L",
+        "AAGIS",
+        "AAGXZ"
+      ]
     },
     "三等奖3": {
       "winners": []
