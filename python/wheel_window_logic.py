@@ -83,12 +83,23 @@ class WheelWindowLogic:
                 self._update_btn_state()
 
     def _init_time_physics(self, power):
-        self.spin_duration = 0.5 + (2.0 * power)
+        speed_ratio = 1.0
+        if hasattr(self, "_get_current_prize"):
+            current_prize = self._get_current_prize()
+            if current_prize and hasattr(current_prize, "spin_speed_ratio"):
+                try:
+                    speed_ratio = float(current_prize.spin_speed_ratio)
+                except (TypeError, ValueError):
+                    speed_ratio = 1.0
+        if speed_ratio < 0.1 or speed_ratio > 5:
+            speed_ratio = 1.0
+
+        self.spin_duration = (0.5 + (2.0 * power)) / speed_ratio
         self.spin_start_time = time.monotonic()
         
         base_brake = 1.0 + (1.5 * power)
         random_flux = random.uniform(-0.4, 0.4)
-        self.brake_duration = max(1.0, base_brake + random_flux)
+        self.brake_duration = max(1.0, base_brake + random_flux) / speed_ratio
         
         self.current_speed = 30.0
         self.brake_phase = "braking"
