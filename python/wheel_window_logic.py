@@ -193,7 +193,7 @@ class WheelWindowLogic:
         if self.phase == "prize_summary":
             return
         if self._all_prizes_complete():
-            self._render_grand_summary()
+            #self._render_grand_summary()
             return
         if self.phase == "wait_for_manual":
             self.target_queue = [] 
