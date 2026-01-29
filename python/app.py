@@ -361,11 +361,12 @@ class LotteryApp:
         ttk.Button(button_frame, text="保存", command=self._save_people).pack(side=tk.LEFT, padx=5)
 
     def _build_prizes_editor(self, parent: ttk.Frame) -> None:
-        self.prize_columns_basic = ("id", "name", "count", "exclude_previous_winners")
+        self.prize_columns_basic = ("id", "name", "count", "spin_speed_ratio", "exclude_previous_winners")
         self.prize_columns_admin = (
             "id",
             "name",
             "count",
+            "spin_speed_ratio",
             "exclude_previous_winners",
             "exclude_must_win",
             "exclude_excluded_list",
@@ -377,6 +378,7 @@ class LotteryApp:
                 "id",
                 "name",
                 "count",
+                "spin_speed_ratio",
                 "exclude_previous_winners",
                 "exclude_must_win",
                 "exclude_excluded_list",
@@ -389,6 +391,7 @@ class LotteryApp:
             ("id", "奖项ID", 90),
             ("name", "奖项名称", 120),
             ("count", "数量", 60),
+            ("spin_speed_ratio", "转盘速度倍速", 110),
             ("exclude_previous_winners", "排除已中奖", 90),
             ("exclude_must_win", "排除保底", 90),
             ("exclude_excluded_list", "应用排除名单", 110),
@@ -1551,6 +1554,7 @@ class LotteryApp:
                     prize.get("id", ""),
                     prize.get("name", ""),
                     prize.get("count", ""),
+                    prize.get("spin_speed_ratio", 1.0),
                     "是" if prize.get("exclude_previous_winners", True) else "否",
                     "是" if prize.get("exclude_must_win", True) else "否",
                     "是" if prize.get("exclude_excluded_list", True) else "否",
@@ -1625,6 +1629,7 @@ class LotteryApp:
         prize_id_var = tk.StringVar(value="" if initial is None else str(initial.get("id", "")))
         name_var = tk.StringVar(value="" if initial is None else str(initial.get("name", "")))
         count_var = tk.StringVar(value="" if initial is None else str(initial.get("count", "")))
+        spin_speed_var = tk.StringVar(value=str(initial.get("spin_speed_ratio", 1.0) if initial else 1.0))
         must_win_var = tk.StringVar(
             value="" if initial is None else ",".join(initial.get("must_win_ids", []))
         )
@@ -1644,17 +1649,19 @@ class LotteryApp:
         ttk.Entry(dialog, textvariable=name_var).grid(row=1, column=1, padx=10, pady=5)
         ttk.Label(dialog, text="数量:").grid(row=2, column=0, padx=10, pady=5, sticky=tk.W)
         ttk.Entry(dialog, textvariable=count_var).grid(row=2, column=1, padx=10, pady=5)
+        ttk.Label(dialog, text="转盘速度倍速(0.1-5):").grid(row=3, column=0, padx=10, pady=5, sticky=tk.W)
+        ttk.Entry(dialog, textvariable=spin_speed_var).grid(row=3, column=1, padx=10, pady=5)
         ttk.Checkbutton(dialog, text="排除已中奖", variable=exclude_previous_var).grid(
-            row=3, column=0, columnspan=2, sticky=tk.W, padx=10
+            row=4, column=0, columnspan=2, sticky=tk.W, padx=10
         )
         if is_admin:
-            ttk.Label(dialog, text="保底工号(逗号分隔):").grid(row=4, column=0, padx=10, pady=5, sticky=tk.W)
-            ttk.Entry(dialog, textvariable=must_win_var).grid(row=4, column=1, padx=10, pady=5)
+            ttk.Label(dialog, text="保底工号(逗号分隔):").grid(row=5, column=0, padx=10, pady=5, sticky=tk.W)
+            ttk.Entry(dialog, textvariable=must_win_var).grid(row=5, column=1, padx=10, pady=5)
             ttk.Checkbutton(dialog, text="排除保底名单", variable=exclude_must_win_var).grid(
-                row=5, column=0, columnspan=2, sticky=tk.W, padx=10
+                row=6, column=0, columnspan=2, sticky=tk.W, padx=10
             )
             ttk.Checkbutton(dialog, text="应用排除名单", variable=exclude_excluded_var).grid(
-                row=6, column=0, columnspan=2, sticky=tk.W, padx=10
+                row=7, column=0, columnspan=2, sticky=tk.W, padx=10
             )
 
         result: dict[str, Any] | None = None
@@ -1671,6 +1678,13 @@ class LotteryApp:
             except ValueError:
                 messagebox.showerror("错误", "数量必须是整数。", parent=dialog)
                 return
+            spin_speed_raw = spin_speed_var.get().strip()
+            try:
+                spin_speed_ratio = float(spin_speed_raw)
+            except ValueError:
+                spin_speed_ratio = 1.0
+            if spin_speed_ratio < 0.1 or spin_speed_ratio > 5:
+                spin_speed_ratio = 1.0
             if is_admin:
                 must_win_ids = [item.strip() for item in must_win_var.get().split(",") if item.strip()]
                 exclude_must_win = exclude_must_win_var.get()
@@ -1684,6 +1698,7 @@ class LotteryApp:
                 "id": prize_id,
                 "name": name,
                 "count": count,
+                "spin_speed_ratio": spin_speed_ratio,
                 "exclude_previous_winners": exclude_previous_var.get(),
                 "exclude_must_win": exclude_must_win,
                 "exclude_excluded_list": exclude_excluded,
@@ -1695,7 +1710,7 @@ class LotteryApp:
             dialog.destroy()
 
         button_frame = ttk.Frame(dialog, padding=10)
-        button_frame.grid(row=7 if is_admin else 5, column=0, columnspan=2)
+        button_frame.grid(row=8 if is_admin else 6, column=0, columnspan=2)
         ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=5)
 

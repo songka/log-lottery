@@ -473,6 +473,18 @@ class WheelWindowRender:
             rows.append("  ".join(names[i:i + per_row]))
         return "\n".join(rows)
 
+    def _format_winner_display(self, winner: dict) -> str:
+        department = winner.get("department", "未知部门")
+        person_id = winner.get("person_id", "")
+        person_name = winner.get("person_name", "未知")
+        return f"{department} {person_id} {person_name}".strip()
+
+    def _winner_columns(self, winner: dict) -> tuple[str, str, str]:
+        department = winner.get("department", "未知部门")
+        person_id = winner.get("person_id", "")
+        person_name = winner.get("person_name", "未知")
+        return department, person_id, person_name
+
     def _render_grand_summary(self):
         self.phase = "summary"
         if hasattr(self, "_play_summary_music"):
@@ -492,8 +504,9 @@ class WheelWindowRender:
         grouped = {}
         for w in winners:
             p_name = w.get('prize_name', '未知奖项')
-            if p_name not in grouped: grouped[p_name] = []
-            grouped[p_name].append(w.get('person_name'))
+            if p_name not in grouped:
+                grouped[p_name] = []
+            grouped[p_name].append(w)
 
         ordered_prizes = []
         seen_prize_names = set()
@@ -511,8 +524,8 @@ class WheelWindowRender:
         column_positions = [column_width * (i + 0.5) for i in range(columns)]
         column_heights = [y_start] * columns
 
-        header_height = 28
-        line_height = 20
+        header_height = 30
+        line_height = 22
         block_gap = 76
 
         for idx, (prize_name, names) in enumerate(ordered_prizes):
@@ -523,22 +536,62 @@ class WheelWindowRender:
                 x,
                 y,
                 text=f"✨ {prize_name}",
-                font=("Microsoft YaHei UI", 18, "bold"),
+                font=("Microsoft YaHei UI", 20, "bold"),
                 fill=self.colors["gold_deep"],
                 anchor="n",
                 tags="summary_items",
             )
-            names_text = self._format_names_rows(names) if names else "暂无"
-            self.canvas.create_text(
-                x,
-                y + header_height,
-                text=names_text,
-                font=("Microsoft YaHei UI", 14),
-                fill=self.colors["white"],
-                anchor="n",
-                tags="summary_items",
-            )
-            names_lines = max(1, len(names_text.splitlines()))
+            names_start_y = y + header_height
+            if not names:
+                self.canvas.create_text(
+                    x,
+                    names_start_y,
+                    text="暂无",
+                    font=("Microsoft YaHei UI", 16),
+                    fill=self.colors["white"],
+                    anchor="n",
+                    tags="summary_items",
+                )
+                names_lines = 1
+            else:
+                names_lines = len(names)
+                left = x - column_width / 2 + 10
+                dept_width = column_width * 0.42
+                id_width = column_width * 0.22
+                name_width = column_width - dept_width - id_width - 20
+                dept_x = left
+                id_x = left + dept_width
+                name_x = left + dept_width + id_width
+                for line_idx, winner in enumerate(names):
+                    department, person_id, person_name = self._winner_columns(winner)
+                    line_y = names_start_y + line_idx * line_height
+                    self.canvas.create_text(
+                        dept_x,
+                        line_y,
+                        text=department,
+                        font=("Microsoft YaHei UI", 16),
+                        fill=self.colors["white"],
+                        anchor="nw",
+                        tags="summary_items",
+                    )
+                    self.canvas.create_text(
+                        id_x,
+                        line_y,
+                        text=person_id,
+                        font=("Microsoft YaHei UI", 16),
+                        fill=self.colors["white"],
+                        anchor="nw",
+                        tags="summary_items",
+                    )
+                    self.canvas.create_text(
+                        name_x,
+                        line_y,
+                        text=person_name,
+                        font=("Microsoft YaHei UI", 16),
+                        fill=self.colors["white"],
+                        anchor="nw",
+                        tags="summary_items",
+                    )
             block_height = header_height + names_lines * line_height + block_gap
             column_heights[col] += block_height
 
@@ -559,7 +612,7 @@ class WheelWindowRender:
             winner for winner in self.lottery_state.get("winners", [])
             if winner.get("prize_id") == prize.prize_id
         ]
-        names = [winner.get("person_name", "未知") for winner in winners]
+        names = [self._format_winner_display(winner) for winner in winners]
         if not names:
             self.canvas.create_text(width / 2, height / 2, text="暂无中奖者", font=("Microsoft YaHei UI", 22, "bold"), fill=self.colors["white"], tags="prize_summary")
             return
@@ -569,7 +622,7 @@ class WheelWindowRender:
         column_width = width / columns
         column_positions = [column_width * (i + 0.5) for i in range(columns)]
         rows = math.ceil(total / columns)
-        font_size = 20 if total <= 10 else 18 if total <= 24 else 16
+        font_size = 22 if total <= 10 else 20 if total <= 24 else 18
 
         start_y = 160
         for col in range(columns):

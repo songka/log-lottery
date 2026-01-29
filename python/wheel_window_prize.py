@@ -18,6 +18,17 @@ class WheelWindowPrize:
         
         self._refresh_prize_options(hide_completed=False)
         self._refresh_history_list()
+
+        if self.phase == "summary" and self._has_next_prize():
+            if self.summary_scroll_after_id:
+                self.after_cancel(self.summary_scroll_after_id)
+                self.summary_scroll_after_id = None
+            self._clear_canvas_layers()
+            if hasattr(self, "_stop_music"):
+                self._stop_music()
+            self.phase = "idle"
+            self.result_var.set("奖项已更新，请长按空格/按钮蓄力，开始抽奖")
+            self._prepare_wheel()
         
         is_busy = bool(self.target_queue) or (self.phase not in ["idle", "finished", "wait_for_manual"])
         

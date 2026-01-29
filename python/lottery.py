@@ -30,6 +30,7 @@ class PrizeConfig:
     exclude_must_win: bool
     exclude_excluded_list: bool
     must_win_ids: List[str]
+    spin_speed_ratio: float = 1.0
 
 
 @dataclass
@@ -75,6 +76,18 @@ def _parse_optional_int(value: Any) -> Optional[int]:
     if raw == "":
         return None
     return int(raw)
+
+
+def _parse_speed_ratio(value: Any, default: float = 1.0) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        ratio = float(value)
+    except (TypeError, ValueError):
+        return default
+    if ratio < 0.1 or ratio > 5:
+        return default
+    return ratio
 
 
 def _split_ids(raw: str) -> List[str]:
@@ -125,6 +138,7 @@ def _read_prizes_csv(path: Path) -> List[Dict[str, Any]]:
                     "exclude_must_win": _parse_bool(row.get("exclude_must_win", True)),
                     "exclude_excluded_list": _parse_bool(row.get("exclude_excluded_list", True)),
                     "must_win_ids": must_win_ids,
+                    "spin_speed_ratio": _parse_speed_ratio(row.get("spin_speed_ratio", 1.0)),
                 }
             )
         return data
@@ -148,6 +162,7 @@ def _write_prizes_csv(path: Path, payload: Iterable[Dict[str, Any]]) -> None:
         "exclude_must_win",
         "exclude_excluded_list",
         "must_win_ids",
+        "spin_speed_ratio",
     ]
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -162,6 +177,7 @@ def _write_prizes_csv(path: Path, payload: Iterable[Dict[str, Any]]) -> None:
                     "exclude_must_win": row.get("exclude_must_win", True),
                     "exclude_excluded_list": row.get("exclude_excluded_list", True),
                     "must_win_ids": ",".join(row.get("must_win_ids", [])),
+                    "spin_speed_ratio": row.get("spin_speed_ratio", 1.0),
                 }
             )
 
@@ -246,6 +262,7 @@ def parse_prize_entries(raw_prizes: Iterable[Dict[str, Any]]) -> List[PrizeConfi
                 exclude_must_win=bool(entry.get("exclude_must_win", True)),
                 exclude_excluded_list=bool(entry.get("exclude_excluded_list", True)),
                 must_win_ids=[str(item) for item in entry.get("must_win_ids", [])],
+                spin_speed_ratio=_parse_speed_ratio(entry.get("spin_speed_ratio", 1.0)),
             )
         )
     return prizes
