@@ -417,6 +417,11 @@ def draw_prize(
             applicable_prize_ids = {
                 item.prize_id
                 for item in prizes
+                if not item.exclude_excluded_list
+            }
+            remaining_applicable_prize_ids = {
+                item.prize_id
+                for item in prizes
                 if remaining_slots(item, state) > 0 and not item.exclude_excluded_list
             }
             existing_applicable_total = sum(
@@ -467,7 +472,7 @@ def draw_prize(
             else:
                 max_additional_excluded = remaining
 
-            remaining_rounds = len(applicable_prize_ids)
+            remaining_rounds = len(remaining_applicable_prize_ids)
             per_round_min_excluded = 0
             if remaining_rounds > 0:
                 remaining_excluded_candidates = [
