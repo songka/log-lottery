@@ -698,6 +698,52 @@ class LotteryApp:
         # 5. 如果主界面有选中奖项，立即同步给转盘
         if current_prize_id:
             self.wheel_window.select_prize_by_id(current_prize_id)
+        # --- 新增内容：为主界面绑定远程控制快捷键 ---
+        # 定义转发函数
+        def forward_event_to_wheel(event):
+
+            if not self.wheel_window or not self.wheel_window.winfo_exists():
+                return
+                
+            # 如果按下的是 F11
+            if event.keysym == "F11":
+                # 强行调用转盘窗口的全屏方法，并跳过主界面自身可能存在的 F11 响应
+                self.wheel_window._toggle_fullscreen()
+                return "break"  # 关键：阻止事件继续传递给主界面的 Tkinter 处理
+
+            # 2. 分发按下和松开事件
+            if event.type == tk.EventType.KeyPress:
+                # 转发给转盘的按下处理
+                if hasattr(self.wheel_window, "_on_key_down"):
+                    self.wheel_window._on_key_down(event)
+            elif event.type == tk.EventType.KeyRelease:
+                # 转发给转盘的松开处理 (关键：影响回车启动)
+                if hasattr(self.wheel_window, "_on_key_up"):
+                    self.wheel_window._on_key_up(event)
+
+        # 在主界面 root 上绑定所有相关按键
+        # 注意：这里需要同时绑定 KeyPress 和 KeyRelease
+        keys_to_forward = [
+            "<Return>", "<KeyRelease-Return>",
+            "<space>", "<KeyRelease-space>",
+            "<Up>", "<Down>",
+            "<F11>"
+        ]
+        
+        for k in keys_to_forward:
+            self.root.bind(k, forward_event_to_wheel)
+
+        # 窗口关闭时记得解除主界面的绑定，否则主界面无法正常输入
+        self.wheel_window.bind("<Destroy>", lambda e: self._unbind_remote_controls())
+
+    def _unbind_remote_controls(self):
+        """清理主界面的远程控制绑定"""
+        keys = ["<Return>", "<KeyRelease-Return>", "<space>", "<KeyRelease-space>", "<Up>", "<Down>", "<F11>"]
+        for k in keys:
+            try:
+                self.root.unbind(k)
+            except:
+                pass
     # 修改主界面的奖项选择回调
     def _on_prize_selected(self, event: tk.Event) -> None:
         """Handle prize selection in the main dropdown."""
@@ -1649,7 +1695,7 @@ class LotteryApp:
         ttk.Entry(dialog, textvariable=name_var).grid(row=1, column=1, padx=10, pady=5)
         ttk.Label(dialog, text="数量:").grid(row=2, column=0, padx=10, pady=5, sticky=tk.W)
         ttk.Entry(dialog, textvariable=count_var).grid(row=2, column=1, padx=10, pady=5)
-        ttk.Label(dialog, text="转盘速度倍速(0.1-5):").grid(row=3, column=0, padx=10, pady=5, sticky=tk.W)
+        ttk.Label(dialog, text="转盘速度倍速(0.1-10):").grid(row=3, column=0, padx=10, pady=5, sticky=tk.W)
         ttk.Entry(dialog, textvariable=spin_speed_var).grid(row=3, column=1, padx=10, pady=5)
         ttk.Checkbutton(dialog, text="排除已中奖", variable=exclude_previous_var).grid(
             row=4, column=0, columnspan=2, sticky=tk.W, padx=10
@@ -1683,7 +1729,7 @@ class LotteryApp:
                 spin_speed_ratio = float(spin_speed_raw)
             except ValueError:
                 spin_speed_ratio = 1.0
-            if spin_speed_ratio < 0.1 or spin_speed_ratio > 5:
+            if spin_speed_ratio < 0.1 or spin_speed_ratio > 10:
                 spin_speed_ratio = 1.0
             if is_admin:
                 must_win_ids = [item.strip() for item in must_win_var.get().split(",") if item.strip()]

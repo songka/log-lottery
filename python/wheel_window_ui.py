@@ -14,7 +14,8 @@ import tkinter as tk
 from tkinter import simpledialog, ttk
 
 from lottery import remaining_slots
-
+# 禁用 comtypes 的 INFO 级别日志，只显示 WARNING 或 ERROR
+logging.getLogger('comtypes').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -208,48 +209,99 @@ class WheelWindowUI:
             self._request_render(force=True)
 
         self._resize_render_after_id = self.after(33, _run)
+    
+    
+    def _on_prize_selected(self, event=None):
+        """核心回调：当奖项切换时（无论是鼠标点击还是键盘按上下键），刷新界面和数据"""
+        # 1. 调用逻辑层的 prepare_wheel 重新根据当前奖项筛选名单
+        current_text = self.prize_var.get()
+        if hasattr(self, "_prepare_wheel"):
+            self._prepare_wheel()
+        
+        # 2. 更新按钮文字（例如变成“开始抽 [新奖项名]”）
+        if hasattr(self, "_update_btn_state"):
+            self._update_btn_state()
+            
+        # 3. 更新提示文字
+        selected_text = self.prize_var.get()
+        self.result_var.set(f"已切换至: {current_text}")
+        
+        #logger.info(f"Prize changed to: {current_text}")
+
+
+
+    def _get_monitors(self):
+        """获取所有显示器的坐标和尺寸 (Windows 优化版)"""
+        monitors = []
+        try:
+            if sys.platform.startswith("win"):
+                import ctypes
+                from ctypes import wintypes
+                
+                # 定义回调函数来获取显示器信息
+                def cb(hMonitor, hdcMonitor, lprcMonitor, dwData):
+                    r = lprcMonitor.contents
+                    monitors.append((r.left, r.top, r.right - r.left, r.bottom - r.top))
+                    return True
+                
+                MONITOR_ENUM_PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+                ctypes.windll.user32.EnumDisplayMonitors(None, None, MONITOR_ENUM_PROC(cb), 0)
+        except Exception as e:
+            logger.error(f"获取多显示器失败: {e}")
+            
+        # 如果没获取到（如非Win系统或出错），回退到 Tkinter 默认主屏
+        if not monitors:
+            monitors.append((0, 0, self.winfo_screenwidth(), self.winfo_screenheight()))
+        return monitors
 
     def _toggle_fullscreen(self, event=None):
+        """修复版：确保退出全屏时能回到原始位置"""
         self.is_fullscreen = not self.is_fullscreen
-        logger.info("Toggle fullscreen: target_state=%s", self.is_fullscreen)
-
+        #logger.info(f"Toggle fullscreen: target_state={self.is_fullscreen}")
+        
         if self.is_fullscreen:
-            # 保存普通窗口状态
-            self.normal_geometry = self.geometry()
-            self._normal_overrideredirect = bool(self.overrideredirect())
-            self._normal_topmost = bool(self.attributes("-topmost"))
-            logger.info("Saved normal geometry: %s", self.normal_geometry)
-
-            # ✅ 用当前窗口所在屏幕（你 log 已证明这一步正确）
-            screen_x, screen_y, screen_w, screen_h = self._get_preferred_fullscreen_geometry()
-            logger.info("Entering fullscreen geometry: x=%s y=%s w=%s h=%s",
-                        screen_x, screen_y, screen_w, screen_h)
-
-            # ✅ 关键：不用 -fullscreen，改用“伪全屏”
-            self.attributes("-fullscreen", False)       # 确保关闭真正全屏
-            self.overrideredirect(True)                 # 去边框
-            self.attributes("-topmost", True)           # 可选：置顶（大屏展示通常需要）
+            # 【重要】记录原始位置和大小（仅在窗口模式时记录）
+            # 使用 winfo_x/y/width/height 比 geometry() 在某些环境下更准确
+            self.normal_geometry = (
+                self.winfo_x(),
+                self.winfo_y(),
+                self.winfo_width(),
+                self.winfo_height()
+            )
+            
+            # 获取显示器信息
+            monitors = self._get_monitors()
+            secondary = [m for m in monitors if m[0] != 0 or m[1] != 0]
+            target = secondary[0] if secondary else monitors[0]
+            x, y, w, h = target
+            
+            # 切换全屏序列
+            self.overrideredirect(False) # 先确保有边框
+            self.state('normal')
+            self.geometry(f"{w}x{h}+{x}+{y}")
             self.update_idletasks()
-            self.geometry(f"{screen_w}x{screen_h}+{screen_x}+{screen_y}")
-            self.update_idletasks()
+            
+            self.overrideredirect(True)  # 去边框
+            self.geometry(f"{w}x{h}+{x}+{y}")
+            
+            self.lift()
+            self.attributes("-topmost", True)
             self.focus_force()
-
-            logger.info("Fake fullscreen enabled, current geometry: %s", self.geometry())
-
         else:
-            # 退出伪全屏：恢复边框/置顶/大小位置
-            self.overrideredirect(getattr(self, "_normal_overrideredirect", False))
-            self.attributes("-topmost", getattr(self, "_normal_topmost", False))
-            self.attributes("-fullscreen", False)
-
-            logger.info("Fullscreen disabled, restoring geometry: %s", self.normal_geometry)
-            if getattr(self, "normal_geometry", None):
-                self.geometry(self.normal_geometry)
+            # 退出全屏
+            self.overrideredirect(False)
+            self.attributes("-topmost", False)
+            
+            # 【修复】恢复到之前记录的坐标
+            if hasattr(self, 'normal_geometry') and self.normal_geometry:
+                nx, ny, nw, nh = self.normal_geometry
+                # 恢复位置和大小
+                self.geometry(f"{nw}x{nh}+{nx}+{ny}")
             else:
-                self.geometry("1440x900")
-
+                self.state('normal')
+                
             self.update_idletasks()
-            logger.info("Exit fullscreen geometry: %s", self.geometry())
+            #logger.info("Fullscreen disabled, restored to normal geometry.")
 
 
     def _handle_close(self) -> None:
@@ -387,10 +439,10 @@ class WheelWindowUI:
                 if secondaries:
                     # 多个扩展屏时，选面积最大的
                     m = max(secondaries, key=lambda mm: (mm.width * mm.height))
-                    logger.info(
-                        "Preferred fullscreen screen (secondary): x=%s y=%s w=%s h=%s",
-                        m.x, m.y, m.width, m.height
-                    )
+                    #logger.info(
+                    #    "Preferred fullscreen screen (secondary): x=%s y=%s w=%s h=%s",
+                    #    m.x, m.y, m.width, m.height
+                    #)
                     return m.x, m.y, m.width, m.height
 
             # 单屏 or 找不到 secondary：回到“当前窗口所在屏”
@@ -415,23 +467,23 @@ class WheelWindowUI:
                     monitor.x <= center_x < monitor.x + monitor.width
                     and monitor.y <= center_y < monitor.y + monitor.height
                 ):
-                    logger.info(
-                        "Current screen (screeninfo): x=%s y=%s w=%s h=%s",
-                        monitor.x,
-                        monitor.y,
-                        monitor.width,
-                        monitor.height,
-                    )
+                    #logger.info(
+                    #    "Current screen (screeninfo): x=%s y=%s w=%s h=%s",
+                    #    monitor.x,
+                    #    monitor.y,
+                    #    monitor.width,
+                    #    monitor.height,
+                    #)
                     return monitor.x, monitor.y, monitor.width, monitor.height
             if monitors:
                 monitor = monitors[0]
-                logger.info(
-                    "Current screen fallback (screeninfo first monitor): x=%s y=%s w=%s h=%s",
-                    monitor.x,
-                    monitor.y,
-                    monitor.width,
-                    monitor.height,
-                )
+                #logger.info(
+                #    "Current screen fallback (screeninfo first monitor): x=%s y=%s w=%s h=%s",
+                #    monitor.x,
+                #    monitor.y,
+                #    monitor.width,
+                #    monitor.height,
+                #)
                 return monitor.x, monitor.y, monitor.width, monitor.height
         elif sys.platform.startswith("win"):
             hwnd = self.winfo_id()
@@ -450,13 +502,13 @@ class WheelWindowUI:
                 if ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
                     width = info.rcMonitor.right - info.rcMonitor.left
                     height = info.rcMonitor.bottom - info.rcMonitor.top
-                    logger.info(
-                        "Current screen (win32): x=%s y=%s w=%s h=%s",
-                        info.rcMonitor.left,
-                        info.rcMonitor.top,
-                        width,
-                        height,
-                    )
+                    #logger.info(
+                    #    "Current screen (win32): x=%s y=%s w=%s h=%s",
+                    #    info.rcMonitor.left,
+                    #    info.rcMonitor.top,
+                    #    width,
+                    #    height,
+                    #)
                     return info.rcMonitor.left, info.rcMonitor.top, width, height
 
         screen_w = self.winfo_screenwidth()
@@ -465,13 +517,13 @@ class WheelWindowUI:
         root_y = self.winfo_rooty()
         screen_x = root_x - (root_x % screen_w)
         screen_y = root_y - (root_y % screen_h)
-        logger.info(
-            "Current screen fallback (tk): x=%s y=%s w=%s h=%s",
-            screen_x,
-            screen_y,
-            screen_w,
-            screen_h,
-        )
+        #logger.info(
+        #    "Current screen fallback (tk): x=%s y=%s w=%s h=%s",
+        #    screen_x,
+        #    screen_y,
+        #    screen_w,
+        #    screen_h,
+        #)
         return screen_x, screen_y, screen_w, screen_h
 
     def _get_primary_screen_geometry(self) -> tuple[int, int, int, int]:
@@ -480,23 +532,23 @@ class WheelWindowUI:
             monitors = screeninfo.get_monitors()
             for monitor in monitors:
                 if getattr(monitor, "is_primary", False):
-                    logger.info(
-                        "Primary screen (screeninfo): x=%s y=%s w=%s h=%s",
-                        monitor.x,
-                        monitor.y,
-                        monitor.width,
-                        monitor.height,
-                    )
+                    #logger.info(
+                    #    "Primary screen (screeninfo): x=%s y=%s w=%s h=%s",
+                    #    monitor.x,
+                    #    monitor.y,
+                    #    monitor.width,
+                    #    monitor.height,
+                    #)
                     return monitor.x, monitor.y, monitor.width, monitor.height
             if monitors:
                 monitor = monitors[0]
-                logger.info(
-                    "Primary screen fallback (screeninfo first monitor): x=%s y=%s w=%s h=%s",
-                    monitor.x,
-                    monitor.y,
-                    monitor.width,
-                    monitor.height,
-                )
+                # logger.info(
+                    # "Primary screen fallback (screeninfo first monitor): x=%s y=%s w=%s h=%s",
+                    # monitor.x,
+                    # monitor.y,
+                    # monitor.width,
+                    # monitor.height,
+                # )
                 return monitor.x, monitor.y, monitor.width, monitor.height
         elif sys.platform.startswith("win"):
             monitor = ctypes.windll.user32.MonitorFromPoint(wintypes.POINT(0, 0), 1)
@@ -514,15 +566,15 @@ class WheelWindowUI:
                 if ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
                     width = info.rcMonitor.right - info.rcMonitor.left
                     height = info.rcMonitor.bottom - info.rcMonitor.top
-                    logger.info(
-                        "Primary screen (win32): x=%s y=%s w=%s h=%s",
-                        info.rcMonitor.left,
-                        info.rcMonitor.top,
-                        width,
-                        height,
-                    )
+                    # logger.info(
+                        # "Primary screen (win32): x=%s y=%s w=%s h=%s",
+                        # info.rcMonitor.left,
+                        # info.rcMonitor.top,
+                        # width,
+                        # height,
+                    # )
                     return info.rcMonitor.left, info.rcMonitor.top, width, height
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
-        logger.info("Primary screen fallback (tk): x=0 y=0 w=%s h=%s", screen_w, screen_h)
+        #logger.info("Primary screen fallback (tk): x=0 y=0 w=%s h=%s", screen_w, screen_h)
         return 0, 0, screen_w, screen_h

@@ -98,6 +98,9 @@ class WheelLotteryWindow(
         self.excluded_winner_range = excluded_winner_range
         self.on_transfer = on_transfer
         self.on_close = on_close
+        self.last_switch_time = 0.0  # 初始化按键切换时间戳
+        self.encouragement_text = ""  # 建议初始化为空字符串或提示语
+
 
         self.title("幸运大转盘 - 终极版")
         
@@ -229,6 +232,8 @@ class WheelLotteryWindow(
         self._animate()
         self._start_auto_scroll() 
         self._init_audio()
+        self.bind("<KeyPress>", self._on_key_down)
+        self.bind("<KeyRelease>", self._on_key_up) 
 
     def update_settings(
         self,

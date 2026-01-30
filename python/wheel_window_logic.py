@@ -105,10 +105,67 @@ class WheelWindowLogic:
         self.brake_phase = "braking"
         self.active_target_id = None
 
-    def _on_key_down(self, event): self._on_input_down()
-    def _on_key_up(self, event): self._on_input_up()
+    # 处理按键按下 (转发过来的)
+    def _on_key_down(self, event):
+        key = event.keysym
+        if key in ["Return", "space"]:
+            if self.phase == "prize_summary":
+                self._confirm_prize_result()
+            else:
+                self._on_input_down() # 触发蓄力
+        elif key in ["Up", "Down"]:
+            # 增加时间间隔判断，防止连按
+            now = time.time()
+            if now - self.last_switch_time > 0.2:
+                if self.phase in ["idle", "wait_for_manual", "finished"]:
+                    self._switch_prize_via_key(key)
+                    self.last_switch_time = now
+
+    # 处理按键松开 (重要：转发过来的)
+    def _on_key_up(self, event):
+        key = event.keysym
+        if key in ["Return", "space"]:
+            # 只有在非结算界面，松开才触发“发射”
+            if self.phase != "prize_summary":
+                if hasattr(self, "_on_input_up"):
+                    self._on_input_up()
     def _on_btn_down(self, event): self._on_input_down()
     def _on_btn_up(self, event): self._on_input_up()
+    def _switch_prize_via_key(self, direction: str):
+        """键盘切换奖项逻辑"""
+        if not hasattr(self, "prize_combo"): return
+        options = self.prize_combo["values"]
+        if not options: return
+        
+        current_idx = self.prize_combo.current()
+        if direction == "Up":
+            new_idx = (current_idx - 1) % len(options)
+        else:
+            new_idx = (current_idx + 1) % len(options)
+            
+        self.prize_combo.current(new_idx)
+        self._on_prize_selected(None) # 触发转盘重绘
+    # 修复全屏切换逻辑
+    def toggle_fullscreen(self, event=None):
+        """
+        修复版：检测是否已经开启了 overrideredirect。
+        如果 UI 层已经处理了 'Fake Fullscreen'，这里就不再调用系统 attributes
+        """
+        try:
+            # 检查是否定义了 UI 层的切换方法（通常 UI 层会有更复杂的多屏适配逻辑）
+            if hasattr(self, "_toggle_fake_fullscreen"):
+                self._toggle_fake_fullscreen()
+            else:
+                # 如果没有自定义逻辑，且没有开启 overrideredirect，才使用自带全屏
+                if not self.overrideredirect():
+                    is_fs = self.attributes("-fullscreen")
+                    self.attributes("-fullscreen", not is_fs)
+                else:
+                    # 如果已开启 overrideredirect 但没写切换逻辑，
+                    # 至少要捕获错误或通过修改 geometry 模拟切换
+                    pass
+        except Exception as e:
+            print(f"Fullscreen toggle error: {e}")
 
     def _pause_game(self):
         if self.phase in ["finished", "summary"]: return

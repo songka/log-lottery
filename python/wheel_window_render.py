@@ -519,7 +519,7 @@ class WheelWindowRender:
                 ordered_prizes.append((prize_name, names))
                 seen_prize_names.add(prize_name)
 
-        columns = 3
+        columns = 2
         column_width = width / columns
         column_positions = [column_width * (i + 0.5) for i in range(columns)]
         column_heights = [y_start] * columns

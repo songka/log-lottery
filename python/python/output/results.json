@@ -1,56 +1,516 @@
 {
   "version": 1,
-  "generated_at": "2026-01-29T13:16:38+08:00",
+  "generated_at": "2026-01-30T14:20:44+08:00",
   "winners": [
     {
-      "timestamp": "2026-01-29T13:14:07+08:00",
-      "prize_id": "提示",
-      "prize_name": "500",
-      "person_id": "YXO05",
-      "person_name": "朱曉晨",
+      "timestamp": "2026-01-30T14:05:59+08:00",
+      "prize_id": "三等奖1-1",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "AAB8Y",
+      "person_name": "張軍濤",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:06:17+08:00",
+      "prize_id": "三等奖1-1",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "XT00O",
+      "person_name": "任青閣",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:06:34+08:00",
+      "prize_id": "三等奖1-1",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "YWN03",
+      "person_name": "李勇杰",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:06:54+08:00",
+      "prize_id": "三等奖1-1",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "YEN94",
+      "person_name": "彭義江",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:07:11+08:00",
+      "prize_id": "三等奖1-1",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "ZK54Z",
+      "person_name": "張建黨",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:07:59+08:00",
+      "prize_id": "三等奖1-2",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "AAFT8",
+      "person_name": "張世俊",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:08:17+08:00",
+      "prize_id": "三等奖1-2",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "AAGY3",
+      "person_name": "張向陽",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:08:34+08:00",
+      "prize_id": "三等奖1-2",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "AAGR9",
+      "person_name": "謝曄帆",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:08:51+08:00",
+      "prize_id": "三等奖1-2",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "YSH47",
+      "person_name": "程穎",
+      "department": "專案管理處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:09:08+08:00",
+      "prize_id": "三等奖1-2",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "D7198",
+      "person_name": "劉浪平",
+      "department": "品保處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:09:32+08:00",
+      "prize_id": "三等奖1-3",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "YXN76",
+      "person_name": "孫玉泉",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:09:49+08:00",
+      "prize_id": "三等奖1-3",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "XT74Q",
+      "person_name": "堯學謹",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:10:05+08:00",
+      "prize_id": "三等奖1-3",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "YEN95",
+      "person_name": "周俊傑",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:10:22+08:00",
+      "prize_id": "三等奖1-3",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "XL460",
+      "person_name": "胡叢浩",
+      "department": "專案管理處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:10:38+08:00",
+      "prize_id": "三等奖1-3",
+      "prize_name": "快乐相伴奖1",
+      "person_id": "YTT54",
+      "person_name": "汪浩然",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:10:59+08:00",
+      "prize_id": "二等奖",
+      "prize_name": "好运连连开心奖",
+      "person_id": "ER632",
+      "person_name": "李甜甜",
       "department": "管理室",
       "source": "random"
     },
     {
-      "timestamp": "2026-01-29T13:16:32+08:00",
-      "prize_id": "特殊2",
-      "prize_name": "500-赖",
-      "person_id": "ER632",
-      "person_name": "李甜甜",
+      "timestamp": "2026-01-30T14:11:14+08:00",
+      "prize_id": "二等奖",
+      "prize_name": "好运连连开心奖",
+      "person_id": "XU35X",
+      "person_name": "楊敏銳",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:11:28+08:00",
+      "prize_id": "二等奖",
+      "prize_name": "好运连连开心奖",
+      "person_id": "YSJ98",
+      "person_name": "王輝",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:11:42+08:00",
+      "prize_id": "二等奖",
+      "prize_name": "好运连连开心奖",
+      "person_id": "AAAAD",
+      "person_name": "王方震",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:11:56+08:00",
+      "prize_id": "二等奖",
+      "prize_name": "好运连连开心奖",
+      "person_id": "YSW76",
+      "person_name": "李文奇",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:12:11+08:00",
+      "prize_id": "二等奖",
+      "prize_name": "好运连连开心奖",
+      "person_id": "XV33F",
+      "person_name": "史展翼",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:12:31+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖2",
+      "person_id": "YXD91",
+      "person_name": "朱礪毅",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:12:45+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖2",
+      "person_id": "YWU68",
+      "person_name": "于翔宇",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:13:00+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖2",
+      "person_id": "AAFFQ",
+      "person_name": "薛嚴飛",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:13:16+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖2",
+      "person_id": "YUL30",
+      "person_name": "邢雨春",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:13:31+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖2",
+      "person_id": "AADQO",
+      "person_name": "孫育淘",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:13:47+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖2",
+      "person_id": "YUL07",
+      "person_name": "段輝",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:14:02+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖2",
+      "person_id": "YUS99",
+      "person_name": "易孝峰",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:14:16+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖2",
+      "person_id": "XV30N",
+      "person_name": "張祥",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:14:29+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖2",
+      "person_id": "98897",
+      "person_name": "朱蕾",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:14:43+08:00",
+      "prize_id": "三等奖2",
+      "prize_name": "快乐相伴奖2",
+      "person_id": "XT74G",
+      "person_name": "徐運環",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:16:48+08:00",
+      "prize_id": "一等奖1",
+      "prize_name": "欧气爆棚幸运奖",
+      "person_id": "D1043",
+      "person_name": "李曉麗",
+      "department": "生物管處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:17:01+08:00",
+      "prize_id": "一等奖1",
+      "prize_name": "欧气爆棚幸运奖",
+      "person_id": "K3920",
+      "person_name": "趙美利",
+      "department": "專案管理處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:17:18+08:00",
+      "prize_id": "一等奖2",
+      "prize_name": "欧气爆棚幸运奖",
+      "person_id": "XH498",
+      "person_name": "阮金盟",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:17:31+08:00",
+      "prize_id": "一等奖2",
+      "prize_name": "欧气爆棚幸运奖",
+      "person_id": "AADQN",
+      "person_name": "桂宇豪",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:17:47+08:00",
+      "prize_id": "一等奖3",
+      "prize_name": "欧气爆棚幸运奖",
+      "person_id": "ZAF5A",
+      "person_name": "劉志鋒",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:18:00+08:00",
+      "prize_id": "一等奖3",
+      "prize_name": "欧气爆棚幸运奖",
+      "person_id": "YTT76",
+      "person_name": "文豪",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:18:33+08:00",
+      "prize_id": "三等奖3",
+      "prize_name": "快乐相伴奖3",
+      "person_id": "YTC74",
+      "person_name": "吳辰琛",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:18:45+08:00",
+      "prize_id": "三等奖3",
+      "prize_name": "快乐相伴奖3",
+      "person_id": "YUF18",
+      "person_name": "盧楚文",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:18:59+08:00",
+      "prize_id": "三等奖3",
+      "prize_name": "快乐相伴奖3",
+      "person_id": "YUF48",
+      "person_name": "申正良",
+      "department": "機構處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:19:13+08:00",
+      "prize_id": "三等奖3",
+      "prize_name": "快乐相伴奖3",
+      "person_id": "YSL50",
+      "person_name": "潘志雄",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:19:27+08:00",
+      "prize_id": "三等奖3",
+      "prize_name": "快乐相伴奖3",
+      "person_id": "AABBR",
+      "person_name": "范聰聰",
+      "department": "製造處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:19:40+08:00",
+      "prize_id": "三等奖3",
+      "prize_name": "快乐相伴奖3",
+      "person_id": "YXM59",
+      "person_name": "王晟懿",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:19:53+08:00",
+      "prize_id": "三等奖3",
+      "prize_name": "快乐相伴奖3",
+      "person_id": "YVG90",
+      "person_name": "候守玉",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:20:09+08:00",
+      "prize_id": "三等奖3",
+      "prize_name": "快乐相伴奖3",
+      "person_id": "XU54S",
+      "person_name": "汪永恒",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:20:23+08:00",
+      "prize_id": "三等奖3",
+      "prize_name": "快乐相伴奖3",
+      "person_id": "YAO51",
+      "person_name": "宋佳驥",
+      "department": "電控處",
+      "source": "random"
+    },
+    {
+      "timestamp": "2026-01-30T14:20:36+08:00",
+      "prize_id": "三等奖3",
+      "prize_name": "快乐相伴奖3",
+      "person_id": "YXW03",
+      "person_name": "萬梓錕",
       "department": "管理室",
       "source": "random"
     }
   ],
   "prizes": {
-    "三等奖1": {
-      "winners": []
+    "三等奖1-1": {
+      "winners": [
+        "AAB8Y",
+        "XT00O",
+        "YWN03",
+        "YEN94",
+        "ZK54Z"
+      ]
+    },
+    "三等奖1-2": {
+      "winners": [
+        "AAFT8",
+        "AAGY3",
+        "AAGR9",
+        "YSH47",
+        "D7198"
+      ]
+    },
+    "三等奖1-3": {
+      "winners": [
+        "YXN76",
+        "XT74Q",
+        "YEN95",
+        "XL460",
+        "YTT54"
+      ]
     },
     "二等奖": {
-      "winners": []
+      "winners": [
+        "ER632",
+        "XU35X",
+        "YSJ98",
+        "AAAAD",
+        "YSW76",
+        "XV33F"
+      ]
     },
     "三等奖2": {
-      "winners": []
+      "winners": [
+        "YXD91",
+        "YWU68",
+        "AAFFQ",
+        "YUL30",
+        "AADQO",
+        "YUL07",
+        "YUS99",
+        "XV30N",
+        "98897",
+        "XT74G"
+      ]
     },
-    "一等奖": {
-      "winners": []
+    "一等奖1": {
+      "winners": [
+        "D1043",
+        "K3920"
+      ]
+    },
+    "一等奖2": {
+      "winners": [
+        "XH498",
+        "AADQN"
+      ]
+    },
+    "一等奖3": {
+      "winners": [
+        "ZAF5A",
+        "YTT76"
+      ]
     },
     "三等奖3": {
-      "winners": []
+      "winners": [
+        "YTC74",
+        "YUF18",
+        "YUF48",
+        "YSL50",
+        "AABBR",
+        "YXM59",
+        "YVG90",
+        "XU54S",
+        "YAO51",
+        "YXW03"
+      ]
     },
     "特等奖": {
-      "winners": []
-    },
-    "提示": {
-      "winners": [
-        "YXO05"
-      ]
-    },
-    "特殊2": {
-      "winners": [
-        "ER632"
-      ]
-    },
-    "Q1": {
       "winners": []
     }
   }
