@@ -475,12 +475,16 @@ def draw_prize(
             remaining_rounds = len(remaining_applicable_prize_ids)
             per_round_min_excluded = 0
             if remaining_rounds > 0:
+                existing_excluded_in_prize = sum(
+                    1 for winner_id in prize_state["winners"] if winner_id in excluded_ids
+                )
+                excluded_in_prize = existing_excluded_in_prize + excluded_selected_count
                 remaining_excluded_candidates = [
                     person
                     for person in people
                     if person.person_id in excluded_ids and person.person_id not in excluded_winners
                 ]
-                if len(remaining_excluded_candidates) >= remaining_rounds:
+                if len(remaining_excluded_candidates) >= remaining_rounds and excluded_in_prize == 0:
                     per_round_min_excluded = 1
             if max_excluded is not None:
                 remaining_max_excluded = max_excluded - current_excluded_total
@@ -495,17 +499,27 @@ def draw_prize(
                 remaining - min_non_excluded_needed,
                 len(excluded_pool),
             )
+            if remaining_rounds > 1 and max_excluded is not None:
+                per_prize_remaining_cap = max_excluded - current_excluded_total - (remaining_rounds - 1)
+                per_prize_remaining_cap = max(per_prize_remaining_cap - excluded_in_prize, 0)
+                max_excluded_allowed = min(
+                    max_excluded_allowed,
+                    per_prize_remaining_cap,
+                )
             if remaining_rounds > 1 and per_round_min_excluded:
-                if max_excluded is not None:
-                    max_excluded_allowed = min(
-                        max_excluded_allowed,
-                        max_excluded - current_excluded_total - (remaining_rounds - 1),
-                    )
                 max_excluded_allowed = min(
                     max_excluded_allowed,
                     len(remaining_excluded_candidates) - (remaining_rounds - 1),
                 )
             min_excluded_allowed = max(min_needed_in_current, per_round_min_excluded)
+            if remaining_rounds == 1:
+                if max_excluded is not None:
+                    max_excluded_allowed = min(
+                        max_excluded_allowed,
+                        max_excluded - current_excluded_total,
+                    )
+                min_needed_total = max(min_excluded - current_excluded_total, 0)
+                min_excluded_allowed = max(min_excluded_allowed, min_needed_total)
             if existing_applicable_total == 0 and non_excluded_pool and min_excluded_allowed < remaining:
                 max_excluded_allowed = min(max_excluded_allowed, remaining - 1)
             if min_excluded_allowed > max_excluded_allowed:
