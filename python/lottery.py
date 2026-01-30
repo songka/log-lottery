@@ -482,8 +482,12 @@ def draw_prize(
                 ]
                 if len(remaining_excluded_candidates) >= remaining_rounds:
                     per_round_min_excluded = 1
-            if max_excluded is not None and current_excluded_total + per_round_min_excluded > max_excluded:
-                per_round_min_excluded = 0
+            if max_excluded is not None:
+                remaining_max_excluded = max_excluded - current_excluded_total
+                if remaining_max_excluded < remaining_rounds:
+                    per_round_min_excluded = 0
+                elif current_excluded_total + per_round_min_excluded > max_excluded:
+                    per_round_min_excluded = 0
 
             min_non_excluded_needed = max(remaining - len(excluded_pool), 0)
             max_excluded_allowed = min(
@@ -492,6 +496,11 @@ def draw_prize(
                 len(excluded_pool),
             )
             if remaining_rounds > 1 and per_round_min_excluded:
+                if max_excluded is not None:
+                    max_excluded_allowed = min(
+                        max_excluded_allowed,
+                        max_excluded - current_excluded_total - (remaining_rounds - 1),
+                    )
                 max_excluded_allowed = min(
                     max_excluded_allowed,
                     len(remaining_excluded_candidates) - (remaining_rounds - 1),
