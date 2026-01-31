@@ -47,7 +47,7 @@ class WheelWindowLogic:
         if self.phase == "prize_summary":
             self._confirm_prize_result()
             return
-        if self.phase in ["spinning", "braking", "auto_wait", "removing"]:
+        if self.phase in ["spinning", "decelerating", "gliding", "auto_wait", "removing"]:
             self._pause_game()
             return
 
@@ -91,19 +91,44 @@ class WheelWindowLogic:
                     speed_ratio = float(current_prize.spin_speed_ratio)
                 except (TypeError, ValueError):
                     speed_ratio = 1.0
-        if speed_ratio < 0.1 or speed_ratio > 5:
+        if speed_ratio < 0.1 or speed_ratio > 10:
             speed_ratio = 1.0
 
         self.spin_duration = (0.5 + (2.0 * power)) / speed_ratio
         self.spin_start_time = time.monotonic()
         
-        base_brake = 1.0 + (1.5 * power)
-        random_flux = random.uniform(-0.4, 0.4)
-        self.brake_duration = max(1.0, base_brake + random_flux) / speed_ratio
-        
+        base_decel = 0.6 + (1.0 * power)
+        random_flux = random.uniform(-0.2, 0.2)
+        self.decel_duration = max(0.4, base_decel + random_flux) / speed_ratio
+        self.glide_duration, self.glide_people_range = self._calculate_glide_profile(speed_ratio)
         self.current_speed = 30.0
         self.brake_phase = "braking"
         self.active_target_id = None
+
+    def _calculate_glide_profile(self, speed_ratio: float) -> tuple[float, tuple[int, int]]:
+        def lerp(a: float, b: float, t: float) -> float:
+            return a + (b - a) * t
+
+        def clamp(value: float, min_value: float, max_value: float) -> float:
+            return max(min_value, min(max_value, value))
+
+        if speed_ratio <= 1.0:
+            t = clamp((speed_ratio - 0.1) / 0.9, 0.0, 1.0)
+            min_people = int(round(lerp(10, 5, t)))
+            max_people = int(round(lerp(4, 2, t)))
+            min_time = lerp(10.0, 3.0, t)
+            max_time = lerp(3.0, 0.2, t)
+        else:
+            t = clamp((speed_ratio - 1.0) / 9.0, 0.0, 1.0)
+            min_people = int(round(lerp(5, 3, t)))
+            max_people = int(round(lerp(2, 1, t)))
+            min_time = lerp(3.0, 0.2, t)
+            max_time = lerp(0.2, 0.2, t)
+
+        low_people = min(min_people, max_people)
+        high_people = max(min_people, max_people)
+        glide_duration = random.uniform(min_time, max_time)
+        return glide_duration, (low_people, high_people)
 
     # 处理按键按下 (转发过来的)
     def _on_key_down(self, event):
@@ -169,7 +194,7 @@ class WheelWindowLogic:
 
     def _pause_game(self):
         if self.phase in ["finished", "summary"]: return
-        if not self.target_queue and self.phase not in ["spinning", "braking"]: return
+        if not self.target_queue and self.phase not in ["spinning", "decelerating", "gliding"]: return
 
         self.phase = "wait_for_manual" 
         self.is_auto_playing = False   
@@ -360,22 +385,44 @@ class WheelWindowLogic:
                 self.current_speed = 30.0 + math.sin(current_time * 5) * 0.5
                 self.wheel_rotation += self.current_speed
             else:
-                self.phase = "braking"
+                self.phase = "decelerating"
+                self.decel_start_time = current_time
+                self.decel_initial_speed = self.current_speed
                 self._calculate_stop_path_by_time() 
 
-        elif self.phase == "braking":
+        elif self.phase == "decelerating":
+            display_energy = 0
+            elapsed = current_time - self.decel_start_time
+            if self.decel_duration <= 0:
+                t = 1.0
+            else:
+                t = min(elapsed / self.decel_duration, 1.0)
+            ease = 1.0 - (1.0 - t) ** 2
+            target_speed = self.glide_speed_target
+            self.current_speed = (
+                self.decel_initial_speed * (1.0 - ease) + target_speed * ease
+            )
+            self.wheel_rotation += self.current_speed
+            if t >= 1.0:
+                self.phase = "gliding"
+                self.glide_start_time = current_time
+
+        elif self.phase == "gliding":
             display_energy = 0
             dist_remaining = self.target_rotation - self.wheel_rotation
-            step = dist_remaining * self.decel_factor
-            
-            min_speed = 0.1
-            if step < min_speed: step = min_speed
-            if step > dist_remaining: step = dist_remaining
+            elapsed = current_time - self.glide_start_time
+            remaining_time = max(self.glide_duration - elapsed, 0.02)
+            ideal_speed = dist_remaining / max(remaining_time * 50.0, 1.0)
+            self.current_speed = self.current_speed * 0.85 + ideal_speed * 0.15
+            min_speed = 0.05
+            if self.current_speed < min_speed:
+                self.current_speed = min_speed
+            if self.current_speed > dist_remaining:
+                self.current_speed = dist_remaining
+            self.wheel_rotation += self.current_speed
 
-            self.wheel_rotation += step
-            
             if dist_remaining < 0.2:
-                self.wheel_rotation = self.target_rotation 
+                self.wheel_rotation = self.target_rotation
                 self._handle_stop()
         
         elif self.phase == "announcing":
@@ -441,14 +488,18 @@ class WheelWindowLogic:
         current_abs = self.wheel_rotation
         current_mod = current_abs % 360
         rotation_needed = (desired_mod - current_mod) % 360
-        
-        avg_speed = 6.0 
-        estimated_dist = avg_speed * (self.brake_duration * 50) 
-        
-        extra_spins = math.ceil(estimated_dist / 360) * 360
-        
-        self.target_rotation = current_abs + rotation_needed + extra_spins
-        self.decel_factor = 0.04 
+
+        total = max(len(self.wheel_names), 1)
+        min_people, max_people = self.glide_people_range
+        max_people = min(max_people, total - 1 if total > 1 else 1)
+        min_people = min(min_people, max_people)
+        glide_people = random.randint(min_people, max_people) if max_people > 0 else 1
+        glide_distance = glide_people * (360.0 / total)
+        extra_spins = 720 if total > 1 else 360
+        extra_spins += math.ceil(glide_distance / 360) * 360
+
+        self.target_rotation = current_abs + rotation_needed + extra_spins + glide_distance
+        self.glide_speed_target = max(glide_distance / max(self.glide_duration * 50.0, 1.0), 0.2)
     def _reset_round_display(self) -> None:
         self.winner_listbox.delete(0, tk.END)
         self.revealed_winners = []
