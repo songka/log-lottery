@@ -93,7 +93,7 @@ class WheelWindowLogic:
                     speed_ratio = 1.0
         if speed_ratio < 0.1 or speed_ratio > 10:
             speed_ratio = 1.0
-
+        self.current_speed_ratio = speed_ratio
         self.spin_duration = (0.5 + (2.0 * power)) / speed_ratio
         self.spin_start_time = time.monotonic()
         
@@ -532,7 +532,7 @@ class WheelWindowLogic:
                     
                     if selected_voice:
                         engine.setProperty('voice', selected_voice)
-                    
+                    engine.setProperty('volume', 1.0)
                     # 慢速清晰播报：恭喜 + 工号 + 姓名 + 奖项
                     engine.setProperty('rate', 200)
                     spaced_id = " ".join(str(person_id))
