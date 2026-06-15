@@ -60,23 +60,23 @@ class WheelWindowLogic:
             if not self.target_queue:
                 if getattr(self, "single_round_display", False):
                     self._reset_round_display()
-                self._start_draw_logic() 
+                self._start_draw_logic()
 
     def _on_input_up(self):
         if self.phase == "charging":
             self.space_held = False
             self.phase = "spinning"
-            self.is_auto_playing = True 
+            self.is_auto_playing = True
             #self._reset_round_display()
             if hasattr(self, "_play_spin_music"):
                 self._play_spin_music()
             # --- 核心：时间物理参数初始化 ---
-            self.locked_charge = self.charge_power 
+            self.locked_charge = self.charge_power
             self._init_time_physics(self.locked_charge)
-            
+
             self.result_var.set("🚀 转盘转动中...")
             self._update_btn_state()
-            
+
             if not self.target_queue:
                 self.phase = "idle"
                 self.result_var.set("无目标")
@@ -91,16 +91,17 @@ class WheelWindowLogic:
                     speed_ratio = float(current_prize.spin_speed_ratio)
                 except (TypeError, ValueError):
                     speed_ratio = 1.0
-        if speed_ratio < 0.1 or speed_ratio > 5:
+        if speed_ratio < 0.1 or speed_ratio > 10:
             speed_ratio = 1.0
-
+        self.current_speed_ratio = speed_ratio
         self.spin_duration = (0.5 + (2.0 * power)) / speed_ratio
         self.spin_start_time = time.monotonic()
-        
+        self.base_decel_factor = random.uniform(0.025, 0.045)
+
         base_brake = 1.0 + (1.5 * power)
         random_flux = random.uniform(-0.4, 0.4)
         self.brake_duration = max(1.0, base_brake + random_flux) / speed_ratio
-        
+
         self.current_speed = 30.0
         self.brake_phase = "braking"
         self.active_target_id = None
@@ -136,13 +137,13 @@ class WheelWindowLogic:
         if not hasattr(self, "prize_combo"): return
         options = self.prize_combo["values"]
         if not options: return
-        
+
         current_idx = self.prize_combo.current()
         if direction == "Up":
             new_idx = (current_idx - 1) % len(options)
         else:
             new_idx = (current_idx + 1) % len(options)
-            
+
         self.prize_combo.current(new_idx)
         self._on_prize_selected(None) # 触发转盘重绘
     # 修复全屏切换逻辑
@@ -171,9 +172,9 @@ class WheelWindowLogic:
         if self.phase in ["finished", "summary"]: return
         if not self.target_queue and self.phase not in ["spinning", "braking"]: return
 
-        self.phase = "wait_for_manual" 
-        self.is_auto_playing = False   
-        self.current_speed = 0.0       
+        self.phase = "wait_for_manual"
+        self.is_auto_playing = False
+        self.current_speed = 0.0
         self.result_var.set("⏸ 已暂停")
         if hasattr(self, "_stop_music"):
             self._stop_music()
@@ -231,7 +232,7 @@ class WheelWindowLogic:
             messagebox.showinfo("结果", "未能抽出中奖者。")
             return
 
-        self.pending_winners = [] 
+        self.pending_winners = []
         self.target_queue = []
 
         for winner in winners:
@@ -253,11 +254,11 @@ class WheelWindowLogic:
             #self._render_grand_summary()
             return
         if self.phase == "wait_for_manual":
-            self.target_queue = [] 
+            self.target_queue = []
         elif self.target_queue or self.phase not in ["idle", "finished", "summary"]:
              return
 
-        self.is_auto_playing = True 
+        self.is_auto_playing = True
         label = self.prize_var.get().strip()
         if not label: return
         prize_id = label.split(" - ", 1)[0]
@@ -280,7 +281,7 @@ class WheelWindowLogic:
         blacklist = excluded_must_win | previous_winners_set | existing_prize_winners
         if exclude_excluded_list:
             blacklist |= clean_excluded_ids
-        
+
         eligible = []
         for p in self.people:
             if str(p.person_id) not in blacklist: eligible.append(p)
@@ -293,12 +294,12 @@ class WheelWindowLogic:
             return
 
         random.shuffle(eligible)
-        
+
         total = len(eligible)
         self.segment_angle = 360.0 / total
         self.wheel_names = []
         random_colors = copy.copy(self.colors["wheel_colors"])
-        
+
         for i, person in enumerate(eligible):
             dept = getattr(person, 'department', '')
             full_text = f"{dept} {person.person_id} {person.name}".strip()
@@ -314,7 +315,7 @@ class WheelWindowLogic:
             })
 
         self.phase = "idle"
-        self.wheel_rotation = 0.0 
+        self.wheel_rotation = 0.0
         self.result_var.set(f"就绪 | {prize.name}")
         self.winner_listbox.delete(0, tk.END)
         self.revealed_winners = []
@@ -337,16 +338,16 @@ class WheelWindowLogic:
             if p["y"] > 1.0: p["y"] = 0
 
         # --- 物理逻辑 V3 ---
-        display_energy = 0.0 
+        display_energy = 0.0
 
         if self.phase == "charging":
             self.charge_power += self.charge_speed
             if self.charge_power > 1.0: self.charge_power = 1.0
-            display_energy = self.charge_power 
-            
+            display_energy = self.charge_power
+
             shake = (random.random() - 0.5) * 3.0 * self.charge_power
             self.wheel_rotation += shake
-            
+
             if self.charge_power < 0.3: self.encouragement_text = "⚡ 蓄力..."
             elif self.charge_power < 0.6: self.encouragement_text = "🔥 能量注入"
             elif self.charge_power < 0.9: self.encouragement_text = "⚠️ 高能！"
@@ -360,24 +361,36 @@ class WheelWindowLogic:
                 self.current_speed = 30.0 + math.sin(current_time * 5) * 0.5
                 self.wheel_rotation += self.current_speed
             else:
+                self._calculate_stop_path_by_time()
                 self.phase = "braking"
-                self._calculate_stop_path_by_time() 
 
         elif self.phase == "braking":
             display_energy = 0
             dist_remaining = self.target_rotation - self.wheel_rotation
-            step = dist_remaining * self.decel_factor
-            
-            min_speed = 0.1
-            if step < min_speed: step = min_speed
+            current_decel = self.base_decel_factor * (self.current_speed_ratio** (1/3))
+            # 1. 定义爬行速度 (非常慢，每帧只动一点点)
+            crawl_speed = 0.12
+            # 2. 逻辑分段
+            if dist_remaining > self.crawl_threshold:
+                step = dist_remaining * current_decel
+                if step < crawl_speed: step = crawl_speed
+            else:
+                # 阶段 B: 随机跨人阶段 (匀速爬行)
+                # 此时转盘会以 crawl_speed 慢吞吞地走过你设定的随机格数
+                if not self.has_entered_crawl:
+                    self.has_entered_crawl = True # 标记进入爬行
+                step = crawl_speed
+                # 接近最终中奖者中心时，平滑停下
+                if dist_remaining < 1.5:
+                    step = dist_remaining * 0.15 # 最后 1 度极速收尾
+            # 3. 执行移动
             if step > dist_remaining: step = dist_remaining
-
             self.wheel_rotation += step
-            
-            if dist_remaining < 0.2:
-                self.wheel_rotation = self.target_rotation 
+
+            if dist_remaining < 0.05:
+                self.wheel_rotation = self.target_rotation
                 self._handle_stop()
-        
+
         elif self.phase == "announcing":
             if self.anim_frame % 5 == 0:
                 self._create_firework()
@@ -385,7 +398,7 @@ class WheelWindowLogic:
                 self._begin_removal_after_announcement()
         elif self.phase == "auto_wait":
             if self.anim_frame % 5 == 0: self._create_firework()
-            
+
             if self.tts_playing:
                 self.auto_wait_start_time = current_time
             elif current_time - self.auto_wait_start_time > self.auto_wait_duration:
@@ -428,32 +441,48 @@ class WheelWindowLogic:
         if not self.target_queue:
             return
         target_id = self.target_queue[0]
+
         item = next((entry for entry in self.wheel_names if str(entry["id"]) == str(target_id)), None)
-        if not item:
-            self._prepare_wheel()
-            item = next((entry for entry in self.wheel_names if str(entry["id"]) == str(target_id)), None)
-        if not item:
-            self.target_queue.pop(0)
-            return
+        if not item: return
+
+        # 关键点：我们在这里计算时，使用的是当前这一帧的 wheel_rotation
         target_center_angle = item["angle_center"]
-        
-        desired_mod = (90 - target_center_angle) % 360
+
+        # 增加格内随机偏移 (-40% 到 +40%)
+        max_offset = (self.segment_angle / 2) * 0.4
+        random_inner_offset = random.uniform(-max_offset, max_offset)
+
+        # 计算对齐角度：指针在 90度位置
+        # 指针指向 90度，意味着转盘需要转到 (90 - 目标中心角) 的位置
+        desired_mod = (90 - (target_center_angle + random_inner_offset)) % 360
+
+        # 锁定当前旋转量
         current_abs = self.wheel_rotation
         current_mod = current_abs % 360
+
+        # 计算到达目标角度需要的最小正向增量
         rotation_needed = (desired_mod - current_mod) % 360
-        
-        avg_speed = 6.0 
-        estimated_dist = avg_speed * (self.brake_duration * 50) 
-        
-        extra_spins = math.ceil(estimated_dist / 360) * 360
-        
-        self.target_rotation = current_abs + rotation_needed + extra_spins
-        self.decel_factor = 0.04 
+
+        # 强制增加 1-6 格的爬行距离
+        self.random_crawl_slots = random.randint(1, 6)
+        crawl_angle = self.random_crawl_slots * self.segment_angle
+
+        # 增加 2 圈基础旋转，确保刹车过程有足够长度展现减速感
+        extra_circles = 2 * 360
+
+        # 汇总最终物理终点
+        # 这个 target_rotation 必须是绝对值，且必须大于 current_abs
+        self.target_rotation = current_abs + rotation_needed + extra_circles + crawl_angle
+
+        # 状态初始化
+        self.crawl_threshold = crawl_angle
+        self.has_entered_crawl = False
+        self.base_decel_factor = random.uniform(0.025, 0.035)
     def _reset_round_display(self) -> None:
         self.winner_listbox.delete(0, tk.END)
         self.revealed_winners = []
         self.canvas.delete("fx_firework")
-        
+
     def _speak_winner(self, department: str, person_id: str, name: str, prize_label: str) -> None:
         if not TTS_AVAILABLE:
             self.tts_playing = False
@@ -468,7 +497,7 @@ class WheelWindowLogic:
                 with self.tts_lock:
                     engine = pyttsx3.init()
                     voices = engine.getProperty('voices')
-                
+
                     # 语音优化：优先寻找更自然的中文女声
                     preferred_voices = ["YAOYAO", "HUIHUI", "XIAOXIAO", "ZH-CN"]
                     selected_voice = None
@@ -478,16 +507,16 @@ class WheelWindowLogic:
                                 selected_voice = v.id
                                 break
                         if selected_voice: break
-                    
+
                     if selected_voice:
                         engine.setProperty('voice', selected_voice)
-                    
+                    engine.setProperty('volume', 1.0)
                     # 慢速清晰播报：恭喜 + 工号 + 姓名 + 奖项
                     engine.setProperty('rate', 200)
                     spaced_id = " ".join(str(person_id))
                     full_sentence = f"恭喜，{spaced_id} {name}，获得{prize_label}"
                     engine.say(full_sentence)
-                    
+
                     engine.runAndWait()
             except Exception as e:
                 print("TTS error:", e)
@@ -513,13 +542,13 @@ class WheelWindowLogic:
             self.winner_listbox.delete(0, tk.END)
         self.revealed_winners.append(info)
         self.winner_listbox.insert(tk.END, f"🏆 {info}")
-        self.winner_listbox.see(tk.END) 
-        
+        self.winner_listbox.see(tk.END)
+
         if winner_entry:
             self._apply_winner_to_state(winner_entry)
             if self.on_transfer:
                 self.on_transfer(self.lottery_state, [winner_entry])
-        
+
         # 获取纯净奖项名称用于播报
         try:
             prize_full = self.prize_var.get()
@@ -541,7 +570,7 @@ class WheelWindowLogic:
             self.post_removal_phase = "prize_summary"
         else:
             self.post_removal_phase = "auto_wait"
-            
+
         self.phase = "announcing"
         self.result_var.set("🎙️ 正在播报中奖结果...")
         self._update_btn_state()
